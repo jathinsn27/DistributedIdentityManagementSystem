@@ -1,0 +1,39 @@
+version: "3.8"
+services:
+  controller:
+    build:
+      context: ./controller
+    container_name: controller
+    networks:
+      - multicast_network
+
+  node0:
+    build:
+      context: ./node
+    container_name: node0
+    networks:
+      - multicast_network
+
+  node1:
+    build:
+      context: ./node
+    container_name: node1
+    networks:
+      - multicast_network
+
+  node2:
+    build:
+      context: ./node
+    container_name: node2
+    networks:
+      - multicast_network
+
+  node3:
+    build:
+      context: ./node
+    container_name: node3
+    networks:
+      - multicast_network
+
+networks:
+  multicast_network:
