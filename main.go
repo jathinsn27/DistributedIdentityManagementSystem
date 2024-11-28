@@ -22,7 +22,7 @@ func main() {
 
 	// Connect to etcd
 	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   []string{"etcd:2379"},
+		Endpoints: strings.Split(os.Getenv("ETCD_ENDPOINTS"), ","),
 		DialTimeout: 5 * time.Second,
 	})
 	if err != nil {
