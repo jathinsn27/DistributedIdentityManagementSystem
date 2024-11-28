@@ -42,7 +42,6 @@ func main() {
 	}
 	defer cli.Close()
 
-	// Join the cluster
     // Join the cluster
     node := Node{ID: nodeID, Address: os.Getenv("NODE_ADDRESS")}
     if err := joinCluster(cli, node); err != nil {
@@ -74,8 +73,6 @@ func main() {
 
 	// Watch for membership changes
 	go watchMembership(cli, list)
-
-	go startMulticasting(list)
 
     go logMemberlist(list)
 
@@ -124,16 +121,4 @@ func logMemberlist(list *memberlist.Memberlist) {
         log.Printf("Current memberlist: %v\n", list.Members())
         time.Sleep(30 * time.Second)
     }
-}
-
-func startMulticasting(list *memberlist.Memberlist) {
-	for {
-        fmt.Printf("Inside multicast function")
-        for _, member := range list.Members() {
-            fmt.Printf("Member: Name=%s, Addr=%s, Port=%d, State=%d\n",
-                member.Name, member.Addr, member.Port, member.State)
-                time.Sleep(30 * time.Second)
-        }
-    }
-    
 }
