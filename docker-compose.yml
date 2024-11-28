@@ -11,7 +11,7 @@ services:
       - --listen-client-urls=http://0.0.0.0:2379
       - --advertise-client-urls=http://etcd1:2379
       - --initial-cluster-token=etcd-cluster-1
-      - --initial-cluster=etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+      - --initial-cluster=etcd1=http://etcd1:2380,etcd2=http://etcd2:2380
       - --initial-cluster-state=new
     volumes:
       - etcd1_data:/etcd-data
@@ -44,7 +44,6 @@ services:
     depends_on:
       - etcd1
       - etcd2
-      - etcd3
     deploy:
       restart_policy:
         condition: on-failure
@@ -61,7 +60,6 @@ services:
     depends_on:
       - etcd1
       - etcd2
-      - etcd3
     deploy:
       restart_policy:
         condition: on-failure
@@ -78,7 +76,6 @@ services:
     depends_on:
       - etcd1
       - etcd2
-      - etcd3
     deploy:
       restart_policy:
         condition: on-failure
@@ -89,7 +86,6 @@ services:
 volumes:
   etcd1_data:
   etcd2_data:
-  etcd3_data:
 
 networks:
   etcd-net:
