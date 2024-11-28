@@ -65,7 +65,7 @@ func main() {
     }
 
 	// Watch for membership changes
-	go watchMembership(cli)
+	go watchMembership(cli, list)
 
 	go startMulticasting(list)
 
