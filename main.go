@@ -119,28 +119,6 @@ func watchMembership(cli *clientv3.Client, list *memberlist.Memberlist) {
     }
 }
 
-/*
-func startMulticasting(list *memberlist.Memberlist) {
-    for {
-        message := MulticastMessage{
-            SenderID: list.LocalNode().Name,
-            Content:  fmt.Sprintf("Hello from %s at %s", list.LocalNode().Name, time.Now()),
-        }
-        
-        for _, member := range list.Members() {
-            if member.Name != list.LocalNode().Name {
-                err := member.Send([]byte(fmt.Sprintf("%s|%s", message.SenderID, message.Content)))
-                if err != nil {
-                    log.Printf("Failed to send message to %s: %v", member.Name, err)
-                }
-            }
-        }
-        
-        time.Sleep(10 * time.Second)
-    }
-}
-*/
-
 func logMemberlist(list *memberlist.Memberlist) {
     for {
         log.Printf("Current memberlist: %v\n", list.Members())
@@ -149,26 +127,13 @@ func logMemberlist(list *memberlist.Memberlist) {
 }
 
 func startMulticasting(list *memberlist.Memberlist) {
-	for _, member := range list.Members() {
-        fmt.Printf("Member: Name=%s, Addr=%s, Port=%d, State=%d\n",
-            member.Name, member.Addr, member.Port, member.State)
+	for {
+        fmt.Printf("Inside multicast function")
+        for _, member := range list.Members() {
+            fmt.Printf("Member: Name=%s, Addr=%s, Port=%d, State=%d\n",
+                member.Name, member.Addr, member.Port, member.State)
+                time.Sleep(30 * time.Second)
+        }
     }
-    // for {
-    //     // message := MulticastMessage{
-    //     //     SenderID: list.LocalNode().Name,
-    //     //     Content:  fmt.Sprintf("Hello from %s at %s", list.LocalNode().Name, time.Now()),
-    //     // }
-        
-		
-    //     // for _, member := range list.Members() {
-    //     //     if member.Name != list.LocalNode().Name {
-    //     //         err := list.SendBestEffort(member, []byte(fmt.Sprintf("%s|%s", message.SenderID, message.Content)))
-    //     //         if err != nil {
-    //     //             log.Printf("Failed to send message to %s: %v", member.Name, err)
-    //     //         }
-    //     //     }
-    //     // }
-        
-    //     // time.Sleep(10 * time.Second)
-    // }
+    
 }
