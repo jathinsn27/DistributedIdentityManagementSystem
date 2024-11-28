@@ -16,6 +16,11 @@ const (
 	etcdPrefix = "/members/"
 )
 
+type MulticastMessage struct {
+    SenderID string
+    Content  string
+}
+
 func main() {
 	nodeID := os.Getenv("NODE_ID")
 	if nodeID == "" {
