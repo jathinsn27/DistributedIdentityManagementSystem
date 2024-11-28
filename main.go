@@ -132,22 +132,23 @@ func startMulticasting(list *memberlist.Memberlist) {
 */
 
 func startMulticasting(list *memberlist.Memberlist) {
-    for {
-        message := MulticastMessage{
-            SenderID: list.LocalNode().Name,
-            Content:  fmt.Sprintf("Hello from %s at %s", list.LocalNode().Name, time.Now()),
-        }
+	fmt.Println(list)
+    // for {
+    //     // message := MulticastMessage{
+    //     //     SenderID: list.LocalNode().Name,
+    //     //     Content:  fmt.Sprintf("Hello from %s at %s", list.LocalNode().Name, time.Now()),
+    //     // }
         
-		fmt.Println(list)
-        // for _, member := range list.Members() {
-        //     if member.Name != list.LocalNode().Name {
-        //         err := list.SendBestEffort(member, []byte(fmt.Sprintf("%s|%s", message.SenderID, message.Content)))
-        //         if err != nil {
-        //             log.Printf("Failed to send message to %s: %v", member.Name, err)
-        //         }
-        //     }
-        // }
+		
+    //     // for _, member := range list.Members() {
+    //     //     if member.Name != list.LocalNode().Name {
+    //     //         err := list.SendBestEffort(member, []byte(fmt.Sprintf("%s|%s", message.SenderID, message.Content)))
+    //     //         if err != nil {
+    //     //             log.Printf("Failed to send message to %s: %v", member.Name, err)
+    //     //         }
+    //     //     }
+    //     // }
         
-        // time.Sleep(10 * time.Second)
-    }
+    //     // time.Sleep(10 * time.Second)
+    // }
 }
