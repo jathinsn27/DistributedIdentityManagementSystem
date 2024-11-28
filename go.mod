@@ -1,6 +1,8 @@
 module membershiptest
 
-go 1.17
+go 1.22
+
+toolchain go1.22.2
 
 require go.etcd.io/etcd/client/v3 v3.5.0
 
