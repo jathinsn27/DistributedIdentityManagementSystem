@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"time"
+	"strings"
 
 	"go.etcd.io/etcd/client/v3"
 )
@@ -23,7 +24,7 @@ func main() {
 	// Connect to etcd
 	cli, err := clientv3.New(clientv3.Config{
 		Endpoints: strings.Split(os.Getenv("ETCD_ENDPOINTS"), ","),
-		DialTimeout: 15 * time.Second,
+		DialTimeout: 15 * time.Second
 	})
 	if err != nil {
 		log.Fatal(err)
