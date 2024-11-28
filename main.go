@@ -16,6 +16,11 @@ const (
 	etcdPrefix = "/members/"
 )
 
+type Node struct {
+    ID       string
+    Address  string
+}
+
 type MulticastMessage struct {
     SenderID string
     Content  string
@@ -45,6 +50,8 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Printf("%s joined the cluster\n", nodeID)
+
+	node := Node{ID: nodeID, Address: os.Getenv("NODE_ADDRESS")}
 
 	// Create memberlist config
     config := memberlist.DefaultLocalConfig()
