@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"time"
+
+	"go.etcd.io/etcd/client/v3"
 )
 
 const (
@@ -21,7 +22,7 @@ func main() {
 
 	// Connect to etcd
 	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   strings.Split(os.Getenv("ETCD_ENDPOINTS"), ","),
+		Endpoints:   []string{"etcd:2379"},
 		DialTimeout: 5 * time.Second,
 	})
 	if err != nil {
