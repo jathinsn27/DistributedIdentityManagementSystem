@@ -138,6 +138,7 @@ func startMulticasting(list *memberlist.Memberlist) {
             Content:  fmt.Sprintf("Hello from %s at %s", list.LocalNode().Name, time.Now()),
         }
         
+		fmt.println(list)
         for _, member := range list.Members() {
             if member.Name != list.LocalNode().Name {
                 err := list.SendBestEffort(member, []byte(fmt.Sprintf("%s|%s", message.SenderID, message.Content)))
