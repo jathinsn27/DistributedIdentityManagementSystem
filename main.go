@@ -70,12 +70,14 @@ func main() {
         log.Fatal("Failed to join memberlist cluster: ", err)
     }
 
-    fmt.Println(list)
+    fmt.Printf("Current memberlist: %v\n", list.Members())
 
 	// Watch for membership changes
 	go watchMembership(cli, list)
 
 	go startMulticasting(list)
+
+    go logMemberlist(list)
 
 	// Keep the node alive
 	for {
@@ -139,8 +141,18 @@ func startMulticasting(list *memberlist.Memberlist) {
 }
 */
 
+func logMemberlist(list *memberlist.Memberlist) {
+    for {
+        log.Printf("Current memberlist: %v\n", list.Members())
+        time.Sleep(30 * time.Second)
+    }
+}
+
 func startMulticasting(list *memberlist.Memberlist) {
-	fmt.Println(list)
+	for _, member := range list.Members() {
+        fmt.Printf("Member: Name=%s, Addr=%s, Port=%d, State=%d\n",
+            member.Name, member.Addr, member.Port, member.State)
+    }
     // for {
     //     // message := MulticastMessage{
     //     //     SenderID: list.LocalNode().Name,
