@@ -43,15 +43,14 @@ func main() {
 	defer cli.Close()
 
 	// Join the cluster
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	_, err = cli.Put(ctx, etcdPrefix+nodeID, nodeID)
-	cancel()
-	if err != nil {
-		log.Fatal(err)
-	}
+    // Join the cluster
+    node := Node{ID: nodeID, Address: os.Getenv("NODE_ADDRESS")}
+    if err := joinCluster(cli, node); err != nil {
+        log.Fatal(err)
+    }
 	fmt.Printf("%s joined the cluster\n", nodeID)
 
-	node := Node{ID: nodeID, Address: os.Getenv("NODE_ADDRESS")}
+	
 
 	// Create memberlist config
     config := memberlist.DefaultLocalConfig()
@@ -71,6 +70,8 @@ func main() {
         log.Fatal("Failed to join memberlist cluster: ", err)
     }
 
+    fmt.Println(list)
+
 	// Watch for membership changes
 	go watchMembership(cli, list)
 
@@ -86,6 +87,13 @@ func main() {
 		}
 		time.Sleep(5 * time.Second)
 	}
+}
+
+func joinCluster(cli *clientv3.Client, node Node) error {
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    _, err := cli.Put(ctx, etcdPrefix+node.ID, node.Address)
+    return err
 }
 
 func watchMembership(cli *clientv3.Client, list *memberlist.Memberlist) {
