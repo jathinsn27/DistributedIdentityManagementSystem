@@ -5,6 +5,7 @@ import (
 	"fmt"
 	_ "github.com/lib/pq"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -17,8 +18,8 @@ const (
 	basePort          = 8000
 	maxNodes          = 4
 	httpPort          = 8080
-	heartbeatInterval = 5 * time.Second
-	leaderTimeout     = 10 * time.Second
+	heartbeatInterval = 2 * time.Second
+	leaderTimeout     = 4 * time.Second
 	quorumSize        = (maxNodes / 2) + 1
 )
 
@@ -100,6 +101,8 @@ func main() {
 }
 
 func startElection(node *Node) {
+	time.Sleep(time.Duration(150+rand.Intn(150)) * time.Millisecond)
+
 	node.mutex.Lock()
 	// Don't start election if we already have a leader
 	if node.lastKnownLeader > 0 && node.activeNodes[node.lastKnownLeader] {
@@ -111,6 +114,13 @@ func startElection(node *Node) {
 	if time.Since(lastHeartbeat) < leaderTimeout {
 		node.mutex.Unlock()
 		return
+	}
+
+	for i := 1; i < node.ID; i++ {
+		if node.activeNodes[i] {
+			node.mutex.Unlock()
+			return
+		}
 	}
 
 	node.term++
@@ -217,7 +227,9 @@ func handleConnection(node *Node, conn net.Conn) {
 			Term:        node.term,
 		}
 
-		if msg.VoteRequest.Term > node.term {
+		if msg.VoteRequest.Term > node.term ||
+			(msg.VoteRequest.Term == node.term &&
+				msg.VoteRequest.CandidateID < node.ID) {
 			response.VoteGranted = true
 			node.term = msg.VoteRequest.Term
 			node.Leader = false
