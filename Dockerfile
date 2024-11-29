@@ -4,7 +4,7 @@ WORKDIR /app
 
 COPY . .
 
-RUN go build -o node main.go
+RUN go build -o node main.go database.go
 RUN go build -o middleware middleware.go
 
 EXPOSE 8080 8090

@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	_ "github.com/lib/pq"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -12,10 +15,11 @@ import (
 
 const (
 	basePort          = 8000
-	maxNodes          = 10
+	maxNodes          = 4
 	httpPort          = 8080
 	heartbeatInterval = 5 * time.Second
 	leaderTimeout     = 10 * time.Second
+	quorumSize        = (maxNodes / 2) + 1
 )
 
 type Node struct {
@@ -23,30 +27,63 @@ type Node struct {
 	Leader          bool
 	lastKnownLeader int
 	mutex           sync.RWMutex
+	activeNodes     map[int]bool
+	votes           map[int]bool
+	term            int
+}
+
+type Message struct {
+	Type        string      // "VoteRequest" or "Heartbeat"
+	VoteRequest VoteRequest // Used if Type is "VoteRequest"
+	Heartbeat   struct {    // Used if Type is "Heartbeat"
+		Term   int
+		Leader int
+	}
+}
+
+type VoteRequest struct {
+	CandidateID int
+	Term        int
+}
+
+type VoteResponse struct {
+	VoteGranted bool
+	Term        int
 }
 
 var (
-	globalLeader   int
 	lastHeartbeat  time.Time
 	heartbeatMutex sync.RWMutex
 )
 
 func main() {
 	nodeID, _ := strconv.Atoi(os.Getenv("NODE_ID"))
-	node := &Node{ID: nodeID, lastKnownLeader: 0}
+	node := &Node{
+		ID:          nodeID,
+		activeNodes: make(map[int]bool),
+		votes:       make(map[int]bool),
+		term:        0,
+	}
+
+	err := initDB()
+	if err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer db.Close()
 
 	go listenForHeartbeats(node)
 	go startHTTPServer(node)
+	go monitorClusterHealth(node)
 
 	time.Sleep(5 * time.Second) // Wait for all nodes to start
 
 	if !discoverExistingLeader(node) {
-		electLeader(node)
+		startElection(node)
 	}
 
 	for {
 		if !isLeaderActive() {
-			electLeader(node)
+			startElection(node)
 		} else {
 			recognizeLeader(node)
 		}
@@ -57,24 +94,230 @@ func main() {
 
 		if isLeader {
 			sendHeartbeats(node)
-			fmt.Printf("Node %d: Leader status: true\n", node.ID)
 		}
 		time.Sleep(heartbeatInterval)
+	}
+}
+
+func startElection(node *Node) {
+	node.mutex.Lock()
+	// Don't start election if we already have a leader
+	if node.lastKnownLeader > 0 && node.activeNodes[node.lastKnownLeader] {
+		node.mutex.Unlock()
+		return
+	}
+
+	// Check if enough time has passed since last heartbeat
+	if time.Since(lastHeartbeat) < leaderTimeout {
+		node.mutex.Unlock()
+		return
+	}
+
+	node.term++
+	currentTerm := node.term
+	node.votes = make(map[int]bool)
+	node.votes[node.ID] = true // Vote for self
+	node.mutex.Unlock()
+
+	votes := 1
+	votingComplete := make(chan bool)
+
+	// Set timeout for election
+	go func() {
+		time.Sleep(2 * time.Second)
+		votingComplete <- true
+	}()
+
+	// Collect votes
+	for i := 1; i <= maxNodes; i++ {
+		if i != node.ID {
+			go func(targetID int) {
+				if requestVote(node, targetID, currentTerm) {
+					node.mutex.Lock()
+					node.votes[targetID] = true
+					votes++
+					if votes >= quorumSize && !node.Leader {
+						node.Leader = true
+						node.lastKnownLeader = node.ID
+						updateLastHeartbeat()
+						votingComplete <- true
+					}
+					node.mutex.Unlock()
+				}
+			}(i)
+		}
+	}
+
+	<-votingComplete // Wait for election to complete
+}
+
+func requestVote(node *Node, targetID, term int) bool {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("node-%d:%d", targetID, basePort+targetID), time.Second)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+
+	msg := Message{
+		Type: "VoteRequest",
+		VoteRequest: VoteRequest{
+			CandidateID: node.ID,
+			Term:        term,
+		},
+	}
+
+	encoder := json.NewEncoder(conn)
+	if err := encoder.Encode(msg); err != nil {
+		return false
+	}
+
+	var response VoteResponse
+	decoder := json.NewDecoder(conn)
+	if err := decoder.Decode(&response); err != nil {
+		return false
+	}
+
+	return response.VoteGranted
+}
+
+func listenForHeartbeats(node *Node) {
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", basePort+node.ID))
+	if err != nil {
+		log.Printf("Error starting listener: %v\n", err)
+		return
+	}
+	defer listener.Close()
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			continue
+		}
+
+		go handleConnection(node, conn)
+	}
+}
+
+func handleConnection(node *Node, conn net.Conn) {
+	defer conn.Close()
+
+	var msg Message
+	decoder := json.NewDecoder(conn)
+	if err := decoder.Decode(&msg); err != nil {
+		return
+	}
+
+	node.mutex.Lock()
+	defer node.mutex.Unlock()
+
+	switch msg.Type {
+	case "VoteRequest":
+		response := VoteResponse{
+			VoteGranted: false,
+			Term:        node.term,
+		}
+
+		if msg.VoteRequest.Term > node.term {
+			response.VoteGranted = true
+			node.term = msg.VoteRequest.Term
+			node.Leader = false
+			node.lastKnownLeader = msg.VoteRequest.CandidateID
+			updateLastHeartbeat()
+		}
+
+		encoder := json.NewEncoder(conn)
+		encoder.Encode(response)
+
+	case "Heartbeat":
+		// Update term and leader if heartbeat is from current or newer term
+		if msg.Heartbeat.Term >= node.term {
+			node.term = msg.Heartbeat.Term
+			node.Leader = false // This node is definitely not the leader
+			node.lastKnownLeader = msg.Heartbeat.Leader
+			updateLastHeartbeat()
+		}
+	}
+}
+
+func monitorClusterHealth(node *Node) {
+	for {
+		node.mutex.Lock()
+		node.activeNodes = make(map[int]bool)
+		for i := 1; i <= maxNodes; i++ {
+			node.activeNodes[i] = pingNode(i)
+		}
+		node.mutex.Unlock()
+		time.Sleep(heartbeatInterval)
+	}
+}
+
+func recognizeLeader(node *Node) {
+	node.mutex.Lock()
+	defer node.mutex.Unlock()
+
+	activeCount := 0
+	for _, active := range node.activeNodes {
+		if active {
+			activeCount++
+		}
+	}
+
+	if activeCount < quorumSize {
+		node.Leader = false
+		return
+	}
+
+	if node.lastKnownLeader > 0 && node.activeNodes[node.lastKnownLeader] {
+		node.Leader = (node.ID == node.lastKnownLeader)
+	}
+}
+
+func startHTTPServer(node *Node) {
+	http.HandleFunc("/leader", func(w http.ResponseWriter, r *http.Request) {
+		node.mutex.RLock()
+		defer node.mutex.RUnlock()
+		fmt.Fprintf(w, "Current leader: Node %d (Term: %d)\n", node.lastKnownLeader, node.term)
+	})
+
+	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		node.mutex.RLock()
+		defer node.mutex.RUnlock()
+		status := struct {
+			NodeID        int
+			IsLeader      bool
+			Term          int
+			ActiveNodes   map[int]bool
+			CurrentLeader int
+		}{
+			NodeID:        node.ID,
+			IsLeader:      node.Leader,
+			Term:          node.term,
+			ActiveNodes:   node.activeNodes,
+			CurrentLeader: node.lastKnownLeader,
+		}
+		json.NewEncoder(w).Encode(status)
+	})
+
+	fmt.Printf("Starting HTTP server on port %d\n", httpPort)
+	if err := http.ListenAndServe(fmt.Sprintf(":%d", httpPort), nil); err != nil {
+		fmt.Printf("Error starting HTTP server: %v\n", err)
 	}
 }
 
 func discoverExistingLeader(node *Node) bool {
 	for i := 1; i <= maxNodes; i++ {
 		if pingNode(i) {
-			leader, err := askForLeader(i)
+			leader, term, err := askForLeader(i)
 			if err == nil && leader > 0 {
-				globalLeader = leader
 				node.mutex.Lock()
-				node.Leader = (node.ID == leader)
-				node.lastKnownLeader = leader
+				if term >= node.term {
+					node.term = term
+					node.Leader = (node.ID == leader)
+					node.lastKnownLeader = leader
+					updateLastHeartbeat()
+				}
 				node.mutex.Unlock()
-				updateLastHeartbeat()
-				fmt.Printf("Node %d: Discovered existing leader: Node %d\n", node.ID, leader)
+				fmt.Printf("Node %d: Discovered existing leader: Node %d (Term: %d)\n", node.ID, leader, term)
 				return true
 			}
 		}
@@ -82,50 +325,16 @@ func discoverExistingLeader(node *Node) bool {
 	return false
 }
 
-func askForLeader(nodeID int) (int, error) {
+func askForLeader(nodeID int) (int, int, error) {
 	resp, err := http.Get(fmt.Sprintf("http://node-%d:%d/leader", nodeID, httpPort))
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	defer resp.Body.Close()
-	var leader int
-	_, err = fmt.Fscanf(resp.Body, "Current leader: Node %d", &leader)
-	return leader, err
-}
 
-func recognizeLeader(node *Node) {
-	lowestActiveID := maxNodes + 1
-	for i := 1; i <= maxNodes; i++ {
-		if pingNode(i) {
-			if i < lowestActiveID {
-				lowestActiveID = i
-			}
-			if i == globalLeader {
-				// Current leader is still active
-				updateLastHeartbeat()
-				node.mutex.Lock()
-				node.Leader = (node.ID == globalLeader)
-				node.lastKnownLeader = globalLeader
-				node.mutex.Unlock()
-				return
-			}
-		}
-	}
-
-	// If we're here, the current leader is not responding
-	if lowestActiveID <= maxNodes {
-		node.mutex.Lock()
-		node.Leader = (node.ID == lowestActiveID)
-		node.lastKnownLeader = lowestActiveID
-		node.mutex.Unlock()
-		globalLeader = lowestActiveID
-		updateLastHeartbeat()
-		if node.Leader {
-			fmt.Printf("Node %d: Assumed leadership\n", node.ID)
-		} else {
-			fmt.Printf("Node %d: Recognized leader: Node %d\n", node.ID, globalLeader)
-		}
-	}
+	var leader, term int
+	_, err = fmt.Fscanf(resp.Body, "Current leader: Node %d (Term: %d)", &leader, &term)
+	return leader, term, err
 }
 
 func isLeaderActive() bool {
@@ -140,37 +349,6 @@ func updateLastHeartbeat() {
 	heartbeatMutex.Unlock()
 }
 
-func electLeader(node *Node) {
-	time.Sleep(2 * time.Second) // Short wait for stability
-
-	if isLeaderActive() {
-		recognizeLeader(node)
-		return
-	}
-
-	lowestActiveID := node.ID
-	for i := 1; i <= maxNodes; i++ {
-		if i != node.ID && pingNode(i) {
-			if i < lowestActiveID {
-				lowestActiveID = i
-			}
-		}
-	}
-
-	node.mutex.Lock()
-	node.Leader = (node.ID == lowestActiveID)
-	node.lastKnownLeader = lowestActiveID
-	node.mutex.Unlock()
-
-	if node.Leader {
-		globalLeader = node.ID
-		updateLastHeartbeat()
-		fmt.Printf("Node %d: Elected self as leader\n", node.ID)
-	} else {
-		fmt.Printf("Node %d: Recognized Node %d as leader\n", node.ID, lowestActiveID)
-	}
-}
-
 func pingNode(id int) bool {
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("node-%d:%d", id, basePort+id), time.Second)
 	if err != nil {
@@ -180,51 +358,43 @@ func pingNode(id int) bool {
 	return true
 }
 
-func listenForHeartbeats(node *Node) {
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", basePort+node.ID))
-	if err != nil {
-		fmt.Printf("Error starting listener: %v\n", err)
-		return
-	}
-	defer listener.Close()
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			continue
-		}
-		updateLastHeartbeat()
-		conn.Close()
-	}
-}
-
 func sendHeartbeats(node *Node) {
+	node.mutex.RLock()
+	if !node.Leader {
+		node.mutex.RUnlock()
+		return // Early return if not leader
+	}
+	currentTerm := node.term
+	nodeID := node.ID
+	node.mutex.RUnlock()
+
+	msg := Message{
+		Type: "Heartbeat",
+		Heartbeat: struct {
+			Term   int
+			Leader int
+		}{
+			Term:   currentTerm,
+			Leader: nodeID,
+		},
+	}
+
 	for i := 1; i <= maxNodes; i++ {
-		if i != node.ID {
-			go func(id int) {
-				if pingNode(id) {
-					fmt.Printf("Node %d: Sent heartbeat to Node %d\n", node.ID, id)
+		if i != nodeID {
+			go func(targetID int) {
+				conn, err := net.DialTimeout("tcp", fmt.Sprintf("node-%d:%d", targetID, basePort+targetID), time.Second)
+				if err != nil {
+					return
 				}
+				defer conn.Close()
+
+				encoder := json.NewEncoder(conn)
+				if err := encoder.Encode(msg); err != nil {
+					return
+				}
+
+				fmt.Printf("Node %d: Sent heartbeat to Node %d (Term: %d)\n", nodeID, targetID, currentTerm)
 			}(i)
 		}
-	}
-}
-
-func startHTTPServer(node *Node) {
-	http.HandleFunc("/leader", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "Current leader: Node %d\n", globalLeader)
-	})
-
-	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
-		node.mutex.RLock()
-		isLeader := node.Leader
-		lastKnownLeader := node.lastKnownLeader
-		node.mutex.RUnlock()
-		fmt.Fprintf(w, "Node %d - Is leader: %v, Last known leader: %d\n", node.ID, isLeader, lastKnownLeader)
-	})
-
-	fmt.Printf("Starting HTTP server on port %d\n", httpPort)
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", httpPort), nil); err != nil {
-		fmt.Printf("Error starting HTTP server: %v\n", err)
 	}
 }
