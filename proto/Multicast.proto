@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package multicast;
+
+option go_package = "DistributedIdentityManagementSystem/proto";
+
+service MulticastService {
+  rpc SendMessage (Message) returns (Empty) {}
+}
+
+message Message {
+  string content = 1;
+}
+
+message Empty {}

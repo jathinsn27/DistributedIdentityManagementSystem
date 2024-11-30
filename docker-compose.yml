@@ -88,8 +88,10 @@ services:
       - NODE_ID=1
       - DB_HOST=db-1
       - ETCD_ENDPOINTS=http://etcd1:2379,http://etcd2:2379
+      - NODE_MCAST_ADDR=node-1:9000
     ports:
       - "8081:8080"
+      - "9001:9000"
     depends_on:
       - db-1
       - etcd1
@@ -102,8 +104,10 @@ services:
       - NODE_ID=2
       - DB_HOST=db-2
       - ETCD_ENDPOINTS=http://etcd1:2379,http://etcd2:2379
+      - NODE_MCAST_ADDR=node-2:9000
     ports:
       - "8082:8080"
+      - "9002:9000"
     depends_on:
       - db-2
 
@@ -115,8 +119,10 @@ services:
       - NODE_ID=3
       - DB_HOST=db-3
       - ETCD_ENDPOINTS=http://etcd1:2379,http://etcd2:2379
+      - NODE_MCAST_ADDR=node-3:9000
     ports:
       - "8083:8080"
+      - "9003:9000"
     depends_on:
       - db-3
 
@@ -128,8 +134,10 @@ services:
       - NODE_ID=4
       - DB_HOST=db-4
       - ETCD_ENDPOINTS=http://etcd1:2379,http://etcd2:2379
+      - NODE_MCAST_ADDR=node-4:9000
     ports:
       - "8084:8080"
+      - "9004:9000"
     depends_on:
       - db-4
       - etcd1

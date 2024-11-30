@@ -15,6 +15,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+    "DistributedIdentityManagementSystem/node"
+    "DistributedIdentityManagementSystem/server"
+    pb "DistributedIdentityManagementSystem/proto"
 )
 
 const (
@@ -36,6 +40,8 @@ type Node struct {
 	votes           map[int]bool
 	term            int
 	address         string
+    Parent          *Node
+	Children        []*Node
 }
 
 type Message struct {
@@ -69,7 +75,7 @@ func main() {
 		activeNodes: make(map[int]bool),
 		votes:       make(map[int]bool),
 		term:        0,
-		address:     "node",
+		address:     os.Getenv("NODE_MCAST_ADDR"),
 	}
 
 	err := initDB()
@@ -159,12 +165,14 @@ func watchMembership(cli *clientv3.Client) {
 		for _, ev := range response.Events {
 			switch ev.Type {
 			case clientv3.EventTypePut:
-				//nodeID := string(ev.Kv.Key[len(etcdPrefix):])
-				//address := string(ev.Kv.Value)
-				//fmt.Printf("Node joined: %s at %s\n", nodeID, address)
+				nodeID := string(ev.Kv.Key[len(etcdPrefix):])
+				address := string(ev.Kv.Value)
+				tree.AddNode(nodeID, address)
+				log.Printf("Node added: %s at %s", nodeID, address)
 			case clientv3.EventTypeDelete:
-				//nodeID := string(ev.Kv.Key[len(etcdPrefix):])
-				//fmt.Printf("Node left: %s\n", nodeID)
+				nodeID := string(ev.Kv.Key[len(etcdPrefix):])
+				tree.RemoveNode(nodeID)
+				log.Printf("Node removed: %s", nodeID)
 			}
 		}
 
