@@ -1,15 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	_ "github.com/lib/pq"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"log"
 	"math/rand"
 	"net"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -21,6 +24,7 @@ const (
 	heartbeatInterval = 2 * time.Second
 	leaderTimeout     = 4 * time.Second
 	quorumSize        = (maxNodes / 2) + 1
+	etcdPrefix        = "/members/"
 )
 
 type Node struct {
@@ -31,6 +35,7 @@ type Node struct {
 	activeNodes     map[int]bool
 	votes           map[int]bool
 	term            int
+	address         string
 }
 
 type Message struct {
@@ -64,6 +69,7 @@ func main() {
 		activeNodes: make(map[int]bool),
 		votes:       make(map[int]bool),
 		term:        0,
+		address:     "node",
 	}
 
 	err := initDB()
@@ -72,17 +78,36 @@ func main() {
 	}
 	defer db.Close()
 
+	// Connect to etcd
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:   strings.Split(os.Getenv("ETCD_ENDPOINTS"), ","),
+		DialTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer cli.Close()
+
+	// Join the cluster
+	if err := joinCluster(cli, node); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("%s joined the cluster\n", nodeID)
+
+	// Watch for membership changes
 	go listenForHeartbeats(node)
 	go startHTTPServer(node)
 	go monitorClusterHealth(node)
 
 	time.Sleep(5 * time.Second) // Wait for all nodes to start
+	go watchMembership(cli)
 
 	if !discoverExistingLeader(node) {
 		startElection(node)
 	}
 
 	for {
+
 		if !isLeaderActive() {
 			startElection(node)
 		} else {
@@ -96,7 +121,69 @@ func main() {
 		if isLeader {
 			sendHeartbeats(node)
 		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		lease, err := cli.Grant(context.Background(), 2)
+
+		if err != nil {
+			log.Printf("Error keeping node alive: %v", err)
+		}
+		if _, err := cli.Put(ctx, etcdPrefix+strconv.Itoa(node.ID), node.address, clientv3.WithLease(lease.ID)); err != nil {
+			log.Printf("Error keeping node alive: %v", err)
+		}
+
 		time.Sleep(heartbeatInterval)
+	}
+}
+
+func joinCluster(cli *clientv3.Client, node *Node) error {
+	lease, err := cli.Grant(context.Background(), 2)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = cli.Put(ctx, etcdPrefix+strconv.Itoa(node.ID), node.address, clientv3.WithLease(lease.ID))
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func watchMembership(cli *clientv3.Client) {
+	watcher := cli.Watch(context.Background(), etcdPrefix, clientv3.WithPrefix())
+	for response := range watcher {
+		for _, ev := range response.Events {
+			switch ev.Type {
+			case clientv3.EventTypePut:
+				//nodeID := string(ev.Kv.Key[len(etcdPrefix):])
+				//address := string(ev.Kv.Value)
+				//fmt.Printf("Node joined: %s at %s\n", nodeID, address)
+			case clientv3.EventTypeDelete:
+				//nodeID := string(ev.Kv.Key[len(etcdPrefix):])
+				//fmt.Printf("Node left: %s\n", nodeID)
+			}
+		}
+
+		// Query etcd to get the current member list
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		resp, err := cli.Get(ctx, etcdPrefix, clientv3.WithPrefix())
+		if err != nil {
+			log.Printf("Failed to get member list from etcd: %v", err)
+			continue
+		}
+
+		members := []string{}
+
+		for _, kv := range resp.Kvs {
+			members = append(members, fmt.Sprintf("%s: %s", kv.Key[len(etcdPrefix):], kv.Value))
+		}
+		fmt.Printf("Current Member list: %s\n", strings.Join(members, ","))
 	}
 }
 
