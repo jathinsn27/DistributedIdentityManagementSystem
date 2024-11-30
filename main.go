@@ -1,18 +1,15 @@
 package main
 
 import (
-	"context"
+	"bytes"
 	"encoding/json"
 	"fmt"
-	_ "github.com/lib/pq"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"log"
 	"math/rand"
 	"net"
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -24,7 +21,6 @@ const (
 	heartbeatInterval = 2 * time.Second
 	leaderTimeout     = 4 * time.Second
 	quorumSize        = (maxNodes / 2) + 1
-	etcdPrefix        = "/members/"
 )
 
 type Node struct {
@@ -36,6 +32,15 @@ type Node struct {
 	votes           map[int]bool
 	term            int
 	address         string
+	membershipHost  string
+}
+
+type MemberInfo1 struct {
+	ID        string    `json:"id"`
+	Address   string    `json:"address"`
+	LeaseID   int64     `json:"lease_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+	IsLeader  bool      `json:"is_leader"`
 }
 
 type Message struct {
@@ -64,43 +69,28 @@ var (
 
 func main() {
 	nodeID, _ := strconv.Atoi(os.Getenv("NODE_ID"))
+	membershipHost := os.Getenv("MEMBERSHIP_HOST")
+
 	node := &Node{
-		ID:          nodeID,
-		activeNodes: make(map[int]bool),
-		votes:       make(map[int]bool),
-		term:        0,
-		address:     "node",
+		ID:             nodeID,
+		activeNodes:    make(map[int]bool),
+		votes:          make(map[int]bool),
+		term:           0,
+		address:        fmt.Sprintf("node-%d:8080", nodeID),
+		membershipHost: membershipHost,
 	}
 
-	err := initDB()
-	if err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
-	}
-	defer db.Close()
-
-	// Connect to etcd
-	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   strings.Split(os.Getenv("ETCD_ENDPOINTS"), ","),
-		DialTimeout: 5 * time.Second,
-	})
-	if err != nil {
+	// Register with membership service
+	if err := registerWithMembership(node); err != nil {
 		log.Fatal(err)
 	}
-	defer cli.Close()
 
-	// Join the cluster
-	if err := joinCluster(cli, node); err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("%s joined the cluster\n", nodeID)
-
-	// Watch for membership changes
 	go listenForHeartbeats(node)
 	go startHTTPServer(node)
-	go monitorClusterHealth(node)
+	go monitorMembershipChanges(node)
+	go sendHeartbeatToMembership(node)
 
-	time.Sleep(5 * time.Second) // Wait for all nodes to start
-	go watchMembership(cli)
+	time.Sleep(5 * time.Second)
 
 	if !discoverExistingLeader(node) {
 		startElection(node)
@@ -122,68 +112,47 @@ func main() {
 			sendHeartbeats(node)
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		lease, err := cli.Grant(context.Background(), 2)
-
-		if err != nil {
-			log.Printf("Error keeping node alive: %v", err)
-		}
-		if _, err := cli.Put(ctx, etcdPrefix+strconv.Itoa(node.ID), node.address, clientv3.WithLease(lease.ID)); err != nil {
-			log.Printf("Error keeping node alive: %v", err)
-		}
-
 		time.Sleep(heartbeatInterval)
 	}
 }
 
-func joinCluster(cli *clientv3.Client, node *Node) error {
-	lease, err := cli.Grant(context.Background(), 2)
-	if err != nil {
-		return err
+func registerWithMembership(node *Node) error {
+	info := struct {
+		ID      string `json:"id"`
+		Address string `json:"address"`
+	}{
+		ID:      strconv.Itoa(node.ID),
+		Address: node.address,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err = cli.Put(ctx, etcdPrefix+strconv.Itoa(node.ID), node.address, clientv3.WithLease(lease.ID))
-	if err != nil {
-		return err
-	}
-
-	return nil
+	body, _ := json.Marshal(info)
+	_, err := http.Post(
+		fmt.Sprintf("http://%s/register", node.membershipHost),
+		"application/json",
+		bytes.NewBuffer(body),
+	)
+	return err
 }
 
-func watchMembership(cli *clientv3.Client) {
-	watcher := cli.Watch(context.Background(), etcdPrefix, clientv3.WithPrefix())
-	for response := range watcher {
-		for _, ev := range response.Events {
-			switch ev.Type {
-			case clientv3.EventTypePut:
-				//nodeID := string(ev.Kv.Key[len(etcdPrefix):])
-				//address := string(ev.Kv.Value)
-				//fmt.Printf("Node joined: %s at %s\n", nodeID, address)
-			case clientv3.EventTypeDelete:
-				//nodeID := string(ev.Kv.Key[len(etcdPrefix):])
-				//fmt.Printf("Node left: %s\n", nodeID)
-			}
+func sendHeartbeatToMembership(node *Node) {
+	ticker := time.NewTicker(heartbeatInterval)
+	for range ticker.C {
+		info := struct {
+			ID       string `json:"id"`
+			Address  string `json:"address"`
+			IsLeader bool   `json:"is_leader"`
+		}{
+			ID:       strconv.Itoa(node.ID),
+			Address:  node.address,
+			IsLeader: node.Leader,
 		}
 
-		// Query etcd to get the current member list
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-
-		resp, err := cli.Get(ctx, etcdPrefix, clientv3.WithPrefix())
-		if err != nil {
-			log.Printf("Failed to get member list from etcd: %v", err)
-			continue
-		}
-
-		members := []string{}
-
-		for _, kv := range resp.Kvs {
-			members = append(members, fmt.Sprintf("%s: %s", kv.Key[len(etcdPrefix):], kv.Value))
-		}
-		fmt.Printf("Current Member list: %s\n", strings.Join(members, ","))
+		body, _ := json.Marshal(info)
+		http.Post(
+			fmt.Sprintf("http://%s/keepalive", node.membershipHost),
+			"application/json",
+			bytes.NewBuffer(body),
+		)
 	}
 }
 
@@ -338,15 +307,36 @@ func handleConnection(node *Node, conn net.Conn) {
 	}
 }
 
-func monitorClusterHealth(node *Node) {
-	for {
+func monitorMembershipChanges(node *Node) {
+	ticker := time.NewTicker(heartbeatInterval)
+	for range ticker.C {
+		resp, err := http.Get(fmt.Sprintf("http://%s/members", node.membershipHost))
+		if err != nil {
+			continue
+		}
+
+		var members map[string]*MemberInfo1
+		if err := json.NewDecoder(resp.Body).Decode(&members); err != nil {
+			resp.Body.Close()
+			continue
+		}
+		resp.Body.Close()
+
 		node.mutex.Lock()
-		node.activeNodes = make(map[int]bool)
-		for i := 1; i <= maxNodes; i++ {
-			node.activeNodes[i] = pingNode(i)
+		// Clear existing active nodes
+		for k := range node.activeNodes {
+			delete(node.activeNodes, k)
+		}
+
+		// Update active nodes list
+		for id, member := range members {
+			nodeID, _ := strconv.Atoi(id)
+			node.activeNodes[nodeID] = true
+			if member.IsLeader {
+				node.lastKnownLeader = nodeID
+			}
 		}
 		node.mutex.Unlock()
-		time.Sleep(heartbeatInterval)
 	}
 }
 

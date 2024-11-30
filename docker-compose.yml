@@ -1,46 +1,16 @@
 version: '3'
 services:
-  middleware:
+
+  membership:
     build: .
-    command: ./middleware
+    command: ./membership
     ports:
-      - "8090:8090"
-    depends_on:
-      - node-1
-      - node-2
-      - node-3
-      - node-4
-
-  etcd1:
-    image: quay.io/coreos/etcd:v3.5.0
-    command:
-      - etcd
-      - --name=etcd1
-      - --initial-advertise-peer-urls=http://etcd1:2380
-      - --listen-peer-urls=http://0.0.0.0:2380
-      - --listen-client-urls=http://0.0.0.0:2379
-      - --advertise-client-urls=http://etcd1:2379
-      - --initial-cluster-token=etcd-cluster-1
-      - --initial-cluster=etcd1=http://etcd1:2380,etcd2=http://etcd2:2380
-      - --initial-cluster-state=new
-    volumes:
-      - etcd1_data:/etcd-data
-
-  etcd2:
-    image: quay.io/coreos/etcd:v3.5.0
-    command:
-      - etcd
-      - --name=etcd2
-      - --initial-advertise-peer-urls=http://etcd2:2380
-      - --listen-peer-urls=http://0.0.0.0:2380
-      - --listen-client-urls=http://0.0.0.0:2379
-      - --advertise-client-urls=http://etcd2:2379
-      - --initial-cluster-token=etcd-cluster-1
-      - --initial-cluster=etcd1=http://etcd1:2380,etcd2=http://etcd2:2380
-      - --initial-cluster-state=new
-    volumes:
-      - etcd2_data:/etcd-data
-
+      - "7946:7946"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:7946/members" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   db-1:
     image: postgres:13
@@ -60,7 +30,6 @@ services:
     volumes:
       - pgdata2:/var/lib/postgresql/data
 
-
   db-3:
     image: postgres:13
     environment:
@@ -69,7 +38,6 @@ services:
       POSTGRES_PASSWORD: password
     volumes:
       - pgdata3:/var/lib/postgresql/data
-
 
   db-4:
     image: postgres:13
@@ -80,20 +48,21 @@ services:
     volumes:
       - pgdata4:/var/lib/postgresql/data
 
-
   node-1:
     build: .
     command: ./node
     environment:
       - NODE_ID=1
       - DB_HOST=db-1
-      - ETCD_ENDPOINTS=http://etcd1:2379,http://etcd2:2379
+      - MEMBERSHIP_HOST=membership:7946
     ports:
       - "8081:8080"
+      - "8001:8001"
     depends_on:
-      - db-1
-      - etcd1
-      - etcd2
+      db-1:
+        condition: service_started
+      membership:
+          condition: service_healthy
 
   node-2:
     build: .
@@ -101,12 +70,15 @@ services:
     environment:
       - NODE_ID=2
       - DB_HOST=db-2
-      - ETCD_ENDPOINTS=http://etcd1:2379,http://etcd2:2379
+      - MEMBERSHIP_HOST=membership:7946
     ports:
       - "8082:8080"
+      - "8002:8002"
     depends_on:
-      - db-2
-
+      db-2:
+        condition: service_started
+      membership:
+          condition: service_healthy
 
   node-3:
     build: .
@@ -114,12 +86,15 @@ services:
     environment:
       - NODE_ID=3
       - DB_HOST=db-3
-      - ETCD_ENDPOINTS=http://etcd1:2379,http://etcd2:2379
+      - MEMBERSHIP_HOST=membership:7946
     ports:
       - "8083:8080"
+      - "8003:8003"
     depends_on:
-      - db-3
-
+      db-3:
+        condition: service_started
+      membership:
+          condition: service_healthy
 
   node-4:
     build: .
@@ -127,18 +102,29 @@ services:
     environment:
       - NODE_ID=4
       - DB_HOST=db-4
-      - ETCD_ENDPOINTS=http://etcd1:2379,http://etcd2:2379
+      - MEMBERSHIP_HOST=membership:7946
     ports:
       - "8084:8080"
+      - "8004:8004"
     depends_on:
-      - db-4
-      - etcd1
-      - etcd2
+      db-4:
+        condition: service_started
+      membership:
+          condition: service_healthy
+
+  middleware:
+    build: .
+    command: ./middleware
+    ports:
+      - "8090:8090"
+    depends_on:
+      - node-1
+      - node-2
+      - node-3
+      - node-4
 
 volumes:
   pgdata1:
   pgdata2:
   pgdata3:
   pgdata4:
-  etcd1_data:
-  etcd2_data:
