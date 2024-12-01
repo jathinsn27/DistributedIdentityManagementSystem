@@ -20,7 +20,6 @@ const (
 	httpPort          = 8080
 	heartbeatInterval = 2 * time.Second
 	leaderTimeout     = 4 * time.Second
-	quorumSize        = (maxNodes / 2) + 1
 )
 
 type Node struct {
@@ -87,7 +86,10 @@ func main() {
 
 	go listenForHeartbeats(node)
 	go startHTTPServer(node)
+
+	// Monitor membership changes and update active nodes list dynamically
 	go monitorMembershipChanges(node)
+
 	go sendHeartbeatToMembership(node)
 
 	time.Sleep(5 * time.Second)
@@ -97,7 +99,6 @@ func main() {
 	}
 
 	for {
-
 		if !isLeaderActive() {
 			startElection(node)
 		} else {
@@ -126,15 +127,18 @@ func registerWithMembership(node *Node) error {
 	}
 
 	body, _ := json.Marshal(info)
+
 	_, err := http.Post(
 		fmt.Sprintf("http://%s/register", node.membershipHost),
 		"application/json",
 		bytes.NewBuffer(body),
 	)
+
 	return err
 }
 
 func sendHeartbeatToMembership(node *Node) {
+	// Send periodic heartbeats to the membership service to indicate this node is alive.
 	ticker := time.NewTicker(heartbeatInterval)
 	for range ticker.C {
 		info := struct {
@@ -146,7 +150,6 @@ func sendHeartbeatToMembership(node *Node) {
 			Address:  node.address,
 			IsLeader: node.Leader,
 		}
-
 		body, _ := json.Marshal(info)
 		http.Post(
 			fmt.Sprintf("http://%s/keepalive", node.membershipHost),
@@ -160,13 +163,12 @@ func startElection(node *Node) {
 	time.Sleep(time.Duration(150+rand.Intn(150)) * time.Millisecond)
 
 	node.mutex.Lock()
-	// Don't start election if we already have a leader
+
 	if node.lastKnownLeader > 0 && node.activeNodes[node.lastKnownLeader] {
 		node.mutex.Unlock()
 		return
 	}
 
-	// Check if enough time has passed since last heartbeat
 	if time.Since(lastHeartbeat) < leaderTimeout {
 		node.mutex.Unlock()
 		return
@@ -181,28 +183,29 @@ func startElection(node *Node) {
 
 	node.term++
 	currentTerm := node.term
+
 	node.votes = make(map[int]bool)
-	node.votes[node.ID] = true // Vote for self
+	node.votes[node.ID] = true
+
 	node.mutex.Unlock()
 
 	votes := 1
+
 	votingComplete := make(chan bool)
 
-	// Set timeout for election
 	go func() {
 		time.Sleep(2 * time.Second)
 		votingComplete <- true
 	}()
 
-	// Collect votes
-	for i := 1; i <= maxNodes; i++ {
-		if i != node.ID {
+	for id := range node.activeNodes {
+		if id != node.ID {
 			go func(targetID int) {
 				if requestVote(node, targetID, currentTerm) {
 					node.mutex.Lock()
 					node.votes[targetID] = true
 					votes++
-					if votes >= quorumSize && !node.Leader {
+					if votes >= len(node.activeNodes)/2+1 && !node.Leader {
 						node.Leader = true
 						node.lastKnownLeader = node.ID
 						updateLastHeartbeat()
@@ -210,11 +213,11 @@ func startElection(node *Node) {
 					}
 					node.mutex.Unlock()
 				}
-			}(i)
+			}(id)
 		}
 	}
 
-	<-votingComplete // Wait for election to complete
+	<-votingComplete
 }
 
 func requestVote(node *Node, targetID, term int) bool {
@@ -316,26 +319,29 @@ func monitorMembershipChanges(node *Node) {
 		}
 
 		var members map[string]*MemberInfo1
+
 		if err := json.NewDecoder(resp.Body).Decode(&members); err != nil {
 			resp.Body.Close()
 			continue
 		}
+
 		resp.Body.Close()
 
 		node.mutex.Lock()
-		// Clear existing active nodes
+
 		for k := range node.activeNodes {
 			delete(node.activeNodes, k)
 		}
 
-		// Update active nodes list
 		for id, member := range members {
 			nodeID, _ := strconv.Atoi(id)
 			node.activeNodes[nodeID] = true
+
 			if member.IsLeader {
 				node.lastKnownLeader = nodeID
 			}
 		}
+
 		node.mutex.Unlock()
 	}
 }
@@ -350,6 +356,9 @@ func recognizeLeader(node *Node) {
 			activeCount++
 		}
 	}
+
+	// Calculate quorum size dynamically
+	quorumSize := (activeCount / 2) + 1
 
 	if activeCount < quorumSize {
 		node.Leader = false
