@@ -106,8 +106,7 @@ func handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if (queryRequest.Type != QueryTypeSelect)
-	{
+	if (queryRequest.Type != QueryTypeSelect) {
 		go multicast(query, args)
 	}
 
