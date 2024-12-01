@@ -20,53 +20,55 @@ func (s *SpanningTree) AddNode(nodeID, address string) {
 
 	node := &SpanningTreeNode{
 		ID:      nodeID,           // Replace with actual node ID
-		address: add, // Replace with actual address
+		address: address, // Replace with actual address
 		Parent:  nil,               // Initially, the node has no parent
 		Children:   make([]*SpanningTreeNode, 0), // Initialize an empty slice for children
 		mu:      sync.RWMutex{},    // Initialize the mutex
 	}
 
 	if s.Root == nil {
-		s.Root = newNode
+		s.Root = node
 		return
 	}
 
 	parent := s.findParent()
-	parent.Children = append(parent.Children, node)
+	if (parent != nil) {
+		parent.Children = append(parent.Children, node)
+	}
 	node.Parent = parent
 }
 
 func (s *SpanningTree) RemoveNode(nodeID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+    s.mu.Lock()
+    defer s.mu.Unlock()
 
-	if s.Root.ID == nodeID {
-		if len(s.Root.Children) > 0 {
-			newRoot := s.Root.Children[0]
-			newRoot.Parent = nil
-			s.Root = newRoot
-			s.Root.Children = append(s.Root.Children, s.Root.Children[1:]...)
-		} else {
-			s.Root = nil
-		}
-		return
-	}
+    if s.Root.ID == nodeID {
+        if len(s.Root.Children) > 0 {
+            newRoot := s.Root.Children[0]
+            newRoot.Parent = nil
+            s.Root = newRoot
+            s.Root.Children = append(s.Root.Children, s.Root.Children[1:]...)
+        } else {
+            s.Root = nil
+        }
+        return
+    }
 
-	var removeNodeRecursive func(*Node) bool
-	removeNodeRecursive = func(n *Node) bool {
-		for i, child := range n.Children {
-			if child.ID == nodeID {
-				n.Children = append(n.Children[:i], n.Children[i+1:]...)
-				return true
-			}
-			if removeNodeRecursive(child) {
-				return true
-			}
-		}
-		return false
-	}
+    var removeNodeRecursive func(*Node) bool
+    removeNodeRecursive = func(n *Node) bool {
+        for i, child := range n.Children {
+            if child.ID == nodeID {
+                n.Children = append(n.Children[:i], n.Children[i+1:]...)
+                return true
+            }
+            if removeNodeRecursive(child) {
+                return true
+            }
+        }
+        return false
+    }
 
-	removeNodeRecursive(s.Root)
+    removeNodeRecursive(s.Root)
 }
 
 func (s *SpanningTree) findParent() *Node {
