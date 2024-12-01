@@ -79,6 +79,12 @@ func main() {
 		membershipHost: membershipHost,
 	}
 
+	err := initDB()
+	if err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer db.Close()
+
 	// Register with membership service
 	if err := registerWithMembership(node); err != nil {
 		log.Fatal(err)
@@ -395,6 +401,8 @@ func startHTTPServer(node *Node) {
 		}
 		json.NewEncoder(w).Encode(status)
 	})
+
+	http.HandleFunc("/query", handleQuery)
 
 	fmt.Printf("Starting HTTP server on port %d\n", httpPort)
 	if err := http.ListenAndServe(fmt.Sprintf(":%d", httpPort), nil); err != nil {
