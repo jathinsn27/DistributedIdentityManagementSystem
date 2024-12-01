@@ -23,9 +23,9 @@ func (s *SpanningTree) AddNode(nodeID, address string) {
 
 	node := &SpanningTreeNode{
 		ID:      nodeID,           // Replace with actual node ID
-		address: address, // Replace with actual address
-		parent:  nil,               // Initially, the node has no parent
-		child:   make([]*SpanningTreeNode, 0), // Initialize an empty slice for children
+		address: add, // Replace with actual address
+		Parent:  nil,               // Initially, the node has no parent
+		Children:   make([]*SpanningTreeNode, 0), // Initialize an empty slice for children
 		mu:      sync.RWMutex{},    // Initialize the mutex
 	}
 

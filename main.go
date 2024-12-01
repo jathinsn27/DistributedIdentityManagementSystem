@@ -37,8 +37,8 @@ type Node struct {
 type SpanningTreeNode struct {
     ID          string
     address         string
-    parent          *SpanningTreeNode
-    child           []*SpanningTreeNode
+    Parent          *SpanningTreeNode
+    Children           []*SpanningTreeNode
     mu              sync.RWMutex
 }
 
