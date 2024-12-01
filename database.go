@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"DistributedIdentityManagementSystem/main"
-	"DistributedIdentityManagementSystem/multicast"
 
 	_ "github.com/lib/pq"
 )

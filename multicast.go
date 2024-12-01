@@ -75,3 +75,19 @@ func sendMulticast(address string, msg MulticastMessage) error {
 
     return nil
 }
+
+func recvMulticast(w http.ResponseWriter, r *http.Request) {
+    var msg MulticastMessage
+
+    err := json.NewDecoder(r.Body).Decode(&msg)
+    if err != nil {
+        fmt.Printf("Error decoding multicast message: %v", err)
+        http.Error(w, "Bad request", http.StatusBadRequest)
+        return
+    }
+
+    fmt.Printf("Received Multicast Message: Query = %s, Args = %v", msg.Query, msg.Args)
+
+    w.WriteHeader(http.StatusOK)
+}
+

@@ -5,7 +5,7 @@ WORKDIR /app
 COPY . .
 
 RUN apk add --no-cache curl
-RUN go build -o node main.go database.go
+RUN go build -o node main.go database.go tree.go multicast.go
 RUN go build -o middleware middleware.go
 RUN go build -o membership membership.go
 
