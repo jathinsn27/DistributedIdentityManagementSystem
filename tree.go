@@ -4,9 +4,6 @@ import (
 	"sync"
 )
 
-type Node = SpanningTreeNode
-
-
 func GetTree() *SpanningTree {
     treeOnce.Do(func() {
         globalTree = &SpanningTree{
@@ -35,8 +32,8 @@ func (s *SpanningTree) AddNode(nodeID, address string) {
 	}
 
 	parent := s.findParent()
-	parent.Children = append(parent.Children, newNode)
-	newNode.Parent = parent
+	parent.Children = append(parent.Children, node)
+	node.Parent = parent
 }
 
 func (s *SpanningTree) RemoveNode(nodeID string) {
