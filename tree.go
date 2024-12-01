@@ -21,7 +21,13 @@ func (s *SpanningTree) AddNode(nodeID, address string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	newNode := &Node{ID: nodeID, Address: address}
+	node := &SpanningTreeNode{
+		ID:      nodeID,           // Replace with actual node ID
+		address: address, // Replace with actual address
+		parent:  nil,               // Initially, the node has no parent
+		child:   make([]*SpanningTreeNode, 0), // Initialize an empty slice for children
+		mu:      sync.RWMutex{},    // Initialize the mutex
+	}
 
 	if s.Root == nil {
 		s.Root = newNode

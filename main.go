@@ -35,7 +35,7 @@ type Node struct {
 }
 
 type SpanningTreeNode struct {
-    NodeID          string
+    ID          string
     address         string
     parent          *SpanningTreeNode
     child           []*SpanningTreeNode
