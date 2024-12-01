@@ -34,6 +34,19 @@ type Node struct {
 	membershipHost  string
 }
 
+type SpanningTreeNode struct {
+    NodeID          string
+    address         string
+    parent          *SpanningTreeNode
+    child           []*SpanningTreeNode
+    mu              sync.RWMutex
+}
+
+type SpanningTree struct {
+	Root *SpanningTreeNode
+	mu   sync.RWMutex
+}
+
 type MemberInfo1 struct {
 	ID        string    `json:"id"`
 	Address   string    `json:"address"`
@@ -61,14 +74,32 @@ type VoteResponse struct {
 	Term        int
 }
 
+func InitGlobalTree() {
+    treeOnce.Do(func() {
+        globalTree = &SpanningTree{
+            Root: nil,
+            mu:   sync.RWMutex{},
+        }
+    })
+}
+
+// GetGlobalTree returns the global tree, initializing it if necessary
+func GetGlobalTree() *SpanningTree {
+    InitGlobalTree()
+    return globalTree
+}
+
 var (
 	lastHeartbeat  time.Time
 	heartbeatMutex sync.RWMutex
+    globalTree *SpanningTree
+    treeOnce   sync.Once
 )
 
 func main() {
 	nodeID, _ := strconv.Atoi(os.Getenv("NODE_ID"))
 	membershipHost := os.Getenv("MEMBERSHIP_HOST")
+
 
 	node := &Node{
 		ID:             nodeID,
@@ -403,6 +434,8 @@ func startHTTPServer(node *Node) {
 	})
 
 	http.HandleFunc("/query", handleQuery)
+
+    http.HandleFunc("/multicast", recvMulticast)
 
 	fmt.Printf("Starting HTTP server on port %d\n", httpPort)
 	if err := http.ListenAndServe(fmt.Sprintf(":%d", httpPort), nil); err != nil {

@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"DistributedIdentityManagementSystem/main"
+	"DistributedIdentityManagementSystem/multicast"
 
 	_ "github.com/lib/pq"
 )
@@ -104,6 +106,11 @@ func handleQuery(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Invalid query type", http.StatusBadRequest)
 		return
+	}
+
+	if (queryRequest.Type != QueryTypeSelect)
+	{
+		go multicast(query, args)
 	}
 
 	rows, err := db.Query(query, args...)
