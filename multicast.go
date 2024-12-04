@@ -21,6 +21,8 @@ func multicast(query string, args []interface{}, nodeId string) error {
 		if err != nil {
 			return fmt.Errorf("failed to construct spanning tree: %v", err)
 		}
+	} else {
+		
 	}
 	fmt.Printf("Hieieieojtotjoe")
 
