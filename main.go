@@ -102,6 +102,27 @@ func main() {
 
 	if !discoverExistingLeader(node) {
 		startElection(node)
+	} else {
+		lastProcessedID, err := getLastProcessedID()
+		if err != nil {
+			log.Fatalf("Error reading last processed ID: %v\n", err)
+		}
+
+		fmt.Printf("Node starting with last processed ID %d\n", lastProcessedID)
+
+		leaderAddress := "node-1:8080" // Replace with actual leader address
+
+		logs, err := requestMissingLogs(leaderAddress, lastProcessedID)
+		if err != nil {
+			log.Fatalf("Error requesting missing logs: %v\n", err)
+		}
+
+		err = applyLogs(logs)
+		if err != nil {
+			log.Fatalf("Error applying logs: %v\n", err)
+		}
+
+		fmt.Println("Node synchronized successfully.")
 	}
 
 	for {
@@ -403,6 +424,29 @@ func startHTTPServer(node *Node) {
 	})
 
 	http.HandleFunc("/query", handleQuery)
+
+	http.HandleFunc("/logs", func(w http.ResponseWriter, r *http.Request) {
+		if !node.Leader {
+			http.Error(w, "Only leader can serve logs", http.StatusForbidden)
+			return
+		}
+
+		lastIDStr := r.URL.Query().Get("last_id")
+		lastID, err := strconv.Atoi(lastIDStr)
+		if err != nil {
+			http.Error(w, "Invalid last_id parameter", http.StatusBadRequest)
+			return
+		}
+
+		logs, err := getLogsAfter(lastID)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Error retrieving logs: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(logs)
+	})
 
 	fmt.Printf("Starting HTTP server on port %d\n", httpPort)
 	if err := http.ListenAndServe(fmt.Sprintf(":%d", httpPort), nil); err != nil {

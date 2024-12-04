@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"strings"
@@ -21,11 +22,12 @@ const (
 )
 
 type QueryRequest struct {
-	Type   QueryType         `json:"type"`
-	Table  string            `json:"table"`
-	Fields []string          `json:"fields,omitempty"`
-	Where  map[string]string `json:"where,omitempty"`
-	Values map[string]string `json:"values,omitempty"`
+	Type      QueryType         `json:"type"`
+	Table     string            `json:"table"`
+	Fields    []string          `json:"fields,omitempty"`
+	Where     map[string]string `json:"where,omitempty"`
+	Values    map[string]string `json:"values,omitempty"`
+	DeleteAll bool
 }
 
 var db *sql.DB
@@ -49,6 +51,12 @@ func initDB() error {
 		return fmt.Errorf("error checking if table exists: %v", err)
 	}
 
+	var tableExistsLog bool
+	err = db.QueryRow("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'transaction_log')").Scan(&tableExistsLog)
+	if err != nil {
+		return fmt.Errorf("error checking if table exists: %v", err)
+	}
+
 	if !tableExists {
 		_, err = db.Exec(`
 			CREATE TABLE users (
@@ -68,7 +76,122 @@ func initDB() error {
 		fmt.Println("Users table already exists")
 	}
 
+	if !tableExistsLog {
+		_, err = db.Exec(`
+			CREATE TABLE transaction_log (
+				id SERIAL PRIMARY KEY,
+				type VARCHAR(10),
+				table_name VARCHAR(255),
+				query TEXT,
+				timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			)
+		`)
+		if err != nil {
+			return fmt.Errorf("error creating transactions table: %v", err)
+		}
+		fmt.Println("Created transaction_log table")
+	} else {
+		fmt.Println("Transactions table already exists")
+	}
+
 	return nil
+}
+
+func logTransaction(queryType QueryType, table string, query string, params ...interface{}) error {
+	// Format the query with its parameters for logging
+	formattedQuery := formatQueryWithParams(query, params)
+
+	// Log the formatted query
+	_, err := db.Exec("INSERT INTO transaction_log (type, table_name, query) VALUES ($1, $2, $3)", queryType, table, formattedQuery)
+	return err
+}
+
+// formatQueryWithParams formats a SQL query string with its parameters.
+func formatQueryWithParams(query string, params []interface{}) string {
+	for i, param := range params {
+		placeholder := fmt.Sprintf("$%d", i+1)
+		value := fmt.Sprintf("'%v'", param)
+		query = strings.Replace(query, placeholder, value, 1)
+	}
+	return query
+}
+
+func requestMissingLogs(leaderAddress string, lastID int) ([]map[string]interface{}, error) {
+	fmt.Printf("http://%s/logs?last_id=%d", leaderAddress, lastID)
+	resp, err := http.Get(fmt.Sprintf("http://%s/logs?last_id=%d", leaderAddress, lastID))
+	if err != nil {
+		return nil, fmt.Errorf("error requesting logs: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("error response from leader: %s", resp.Status)
+	}
+
+	var logs []map[string]interface{}
+	body, _ := ioutil.ReadAll(resp.Body)
+	err = json.Unmarshal(body, &logs)
+	if err != nil {
+		return nil, fmt.Errorf("error decoding logs: %v", err)
+	}
+
+	return logs, nil
+}
+
+func getLogsAfter(lastID int) ([]map[string]interface{}, error) {
+	query := "SELECT id, type, table_name, query FROM transaction_log WHERE id > $1 ORDER BY id ASC"
+
+	rows, err := db.Query(query, lastID)
+	if err != nil {
+		return nil, fmt.Errorf("error querying transaction logs: %v", err)
+	}
+	defer rows.Close()
+
+	var logs []map[string]interface{}
+	for rows.Next() {
+		var id int
+		var ttype, tableName, query string
+
+		if err := rows.Scan(&id, &ttype, &tableName, &query); err != nil {
+			return nil, fmt.Errorf("error scanning row: %v", err)
+		}
+
+		logEntry := map[string]interface{}{
+			"id":         id,
+			"type":       ttype,
+			"table_name": tableName,
+			"query":      query,
+		}
+		logs = append(logs, logEntry)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating over rows: %v", err)
+	}
+
+	return logs, nil
+}
+
+func applyLogs(logs []map[string]interface{}) error {
+	for _, logEntry := range logs {
+		query := logEntry["query"].(string)
+		fmt.Printf("Applying log entry: %s\n", query)
+
+		// Execute the query on the local database
+		if _, err := db.Exec(query); err != nil {
+			return fmt.Errorf("error applying log entry: %v", err)
+		}
+	}
+	return nil
+}
+
+func getLastProcessedID() (int, error) {
+	var lastID int
+	err := db.QueryRow("SELECT COALESCE(MAX(id), 0) FROM transaction_log").Scan(&lastID)
+	if err != nil {
+		return 0, fmt.Errorf("error retrieving last processed ID: %v", err)
+	}
+	return lastID, nil
 }
 
 func handleQuery(w http.ResponseWriter, r *http.Request) {
@@ -97,10 +220,13 @@ func handleQuery(w http.ResponseWriter, r *http.Request) {
 		query, args = buildSelectQuery(queryRequest)
 	case QueryTypeInsert:
 		query, args = buildInsertQuery(queryRequest)
+		logTransaction(QueryTypeInsert, queryRequest.Table, query, args...)
 	case QueryTypeUpdate:
 		query, args = buildUpdateQuery(queryRequest)
+		logTransaction(QueryTypeUpdate, queryRequest.Table, query, args...)
 	case QueryTypeDelete:
 		query, args = buildDeleteQuery(queryRequest)
+		logTransaction(QueryTypeDelete, queryRequest.Table, query, args...)
 	default:
 		http.Error(w, "Invalid query type", http.StatusBadRequest)
 		return
@@ -207,9 +333,17 @@ func buildUpdateQuery(req QueryRequest) (string, []interface{}) {
 
 func buildDeleteQuery(req QueryRequest) (string, []interface{}) {
 	query := fmt.Sprintf("DELETE FROM %s", req.Table)
-	whereClause, args := buildWhereClause(req.Where)
-	query += " WHERE " + whereClause
-	return query, args
+
+	if req.DeleteAll {
+		return query, nil // Return the query without WHERE clause
+	}
+
+	if len(req.Where) > 0 {
+		whereClause, args := buildWhereClause(req.Where)
+		query += " WHERE " + whereClause
+		return query, args
+	}
+	return query, nil
 }
 
 func buildWhereClause(where map[string]string) (string, []interface{}) {
