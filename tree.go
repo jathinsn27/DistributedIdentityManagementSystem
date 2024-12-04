@@ -1,9 +1,7 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"sort"
 	"sync"
 )
@@ -76,9 +74,13 @@ func (s *SpanningTree) RemoveNode(nodeID string, leaderID string) {
 		}
 
 		if id < node.ID {
-			node.Children[0] = removeNode(node.Children[0], id)
+			if len(node.Children) > 0 {
+				node.Children[0] = removeNode(node.Children[0], id)
+			}
 		} else if id > node.ID {
-			node.Children[1] = removeNode(node.Children[1], id)
+			if len(node.Children) > 1 {
+				node.Children[1] = removeNode(node.Children[1], id)
+			}
 		} else {
 			// Node found: handle removal logic here
 
@@ -171,27 +173,71 @@ func rebalance(node *SpanningTreeNode) *SpanningTreeNode {
 
 // Helper function to perform a right rotation
 func rotateRight(y *SpanningTreeNode) *SpanningTreeNode {
+	if y == nil || len(y.Children) == 0 {
+		return y
+	}
+
 	x := y.Children[0]
-	T2 := x.Children[1]
+	if x == nil {
+		return y
+	}
+
+	// Safely handle T2 (which might not exist)
+	var T2 *SpanningTreeNode
+	if len(x.Children) > 1 {
+		T2 = x.Children[1]
+	}
+
+	// Ensure x has enough capacity for children
+	if len(x.Children) < 2 {
+		x.Children = append(x.Children, nil)
+	}
 
 	// Perform rotation
 	x.Children[1] = y
+
+	// Ensure y has enough capacity for children
+	if len(y.Children) < 1 {
+		y.Children = append(y.Children, nil)
+	}
 	y.Children[0] = T2
 
-	// Return new root
 	return x
 }
 
 // Helper function to perform a left rotation
 func rotateLeft(x *SpanningTreeNode) *SpanningTreeNode {
+	// Check if x exists and has enough children
+	if x == nil || len(x.Children) < 2 {
+		return x
+	}
+
+	// Check if right child exists
 	y := x.Children[1]
-	T2 := y.Children[0]
+	if y == nil {
+		return x
+	}
+
+	// Safely handle T2 (which might not exist)
+	var T2 *SpanningTreeNode
+	if len(y.Children) > 0 {
+		T2 = y.Children[0]
+	}
+
+	// Ensure y has enough capacity for children
+	if len(y.Children) < 1 {
+		y.Children = append(y.Children, nil)
+	}
 
 	// Perform rotation
 	y.Children[0] = x
+
+	// Ensure x has enough capacity for children
+	if len(x.Children) < 2 {
+		x.Children = append(x.Children, nil)
+	}
 	x.Children[1] = T2
 
-	// Return new root
 	return y
 }
 
@@ -236,18 +282,7 @@ func (s *SpanningTree) findParent() *SpanningTreeNode {
 	return findNodeWithFewestChildren(s.Root)
 }
 
-func ConstructSpanningTree(tree *SpanningTree, membershipHost string) error {
-	resp, err := http.Get(fmt.Sprintf("http://%s/members", membershipHost))
-	if err != nil {
-		return fmt.Errorf("failed to get members: %v", err)
-	}
-	defer resp.Body.Close()
-
-	var members map[string]*MemberInfo1
-	if err := json.NewDecoder(resp.Body).Decode(&members); err != nil {
-		return fmt.Errorf("failed to decode members: %v", err)
-	}
-
+func ConstructSpanningTree(tree *SpanningTree, members map[string]*MemberInfo1, leader string) error {
 	keys := make([]string, 0, len(members))
 	for k := range members {
 		keys = append(keys, k)
@@ -255,7 +290,6 @@ func ConstructSpanningTree(tree *SpanningTree, membershipHost string) error {
 	sort.Strings(keys)
 
 	fmt.Printf("Keys : %v", keys)
-	leader, _ := GetLeaderId(members)
 
 	for _, key := range keys {
 		memberInfo := members[key]
@@ -300,4 +334,48 @@ func (node *SpanningTreeNode) FindNodeDFS(targetID string) *SpanningTreeNode {
 		current.mu.RUnlock()
 	}
 	return nil
+}
+
+func (st *SpanningTree) PrintTree() {
+	if st.Root == nil {
+		fmt.Println("Empty tree")
+		return
+	}
+
+	fmt.Println("Spanning Tree Structure:")
+	fmt.Println("=======================")
+	st.printDetailedNode(st.Root, "", true)
+}
+
+func (st *SpanningTree) printDetailedNode(node *SpanningTreeNode, prefix string, isLast bool) {
+	if node == nil {
+		return
+	}
+
+	node.mu.RLock()
+	defer node.mu.RUnlock()
+
+	// Choose the appropriate branch symbol
+	branch := "├──"
+	if isLast {
+		branch = "└──"
+	}
+
+	// Print current node with branch
+	fmt.Printf("%s%s Node[ID: %s]\n", prefix, branch, node.ID)
+	fmt.Printf("%s    Address: %s\n", prefix, node.address)
+
+	// Prepare prefix for children
+	childPrefix := prefix
+	if isLast {
+		childPrefix += "    "
+	} else {
+		childPrefix += "│   "
+	}
+
+	// Print children
+	for i, child := range node.Children {
+		isLastChild := i == len(node.Children)-1
+		st.printDetailedNode(child, childPrefix, isLastChild)
+	}
 }

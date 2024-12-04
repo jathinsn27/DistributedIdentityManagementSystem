@@ -107,7 +107,7 @@ func handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if queryRequest.Type != QueryTypeSelect {
-		fmt.Printf("Eaddlkrnklsnglngslkskgnklsdgn,dgn")
+		fmt.Printf("Query : %s\n", queryRequest.Type)
 		go func() {
 			err := multicast(query, args, os.Getenv("NODE_ID"))
 			if err != nil {

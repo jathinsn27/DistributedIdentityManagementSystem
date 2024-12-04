@@ -90,10 +90,11 @@ func GetGlobalTree() *SpanningTree {
 }
 
 var (
-	lastHeartbeat  time.Time
-	heartbeatMutex sync.RWMutex
-	globalTree     *SpanningTree
-	treeOnce       sync.Once
+	lastHeartbeat      time.Time
+	heartbeatMutex     sync.RWMutex
+	globalTree         *SpanningTree
+	treeOnce           sync.Once
+	prevMembershipList []string
 )
 
 func main() {
@@ -381,6 +382,20 @@ func monitorMembershipChanges(node *Node) {
 
 		node.mutex.Unlock()
 	}
+}
+
+func getMembershipList(membershipHost string) (map[string]*MemberInfo1, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s/members", membershipHost))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get members: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var members map[string]*MemberInfo1
+	if err := json.NewDecoder(resp.Body).Decode(&members); err != nil {
+		return nil, fmt.Errorf("failed to decode members: %v", err)
+	}
+	return members, nil
 }
 
 func recognizeLeader(node *Node) {

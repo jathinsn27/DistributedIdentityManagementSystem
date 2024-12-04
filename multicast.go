@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"sync"
 )
 
@@ -16,21 +17,52 @@ type MulticastMessage struct {
 
 func multicast(query string, args []interface{}, nodeId string) error {
 	tree := GetGlobalTree()
+	members, e := getMembershipList(os.Getenv("MEMBERSHIP_HOST"))
+	if e != nil {
+		return fmt.Errorf("failed to query membershipList")
+	}
+	membersList := make([]string, 0, len(members))
+	for k := range members {
+		membersList = append(membersList, k)
+	}
+	leader, e := GetLeaderId(members)
+	if e != nil {
+		return fmt.Errorf("failed to get leader to construct tree")
+	}
 	if tree.Root == nil {
-		err := ConstructSpanningTree(tree, os.Getenv("MEMBERSHIP_HOST"))
+		err := ConstructSpanningTree(tree, members, leader)
 		if err != nil {
 			return fmt.Errorf("failed to construct spanning tree: %v", err)
 		}
 	} else {
-		
+		for _, prevMember := range prevMembershipList {
+			if members[prevMember] == nil {
+				// Delete all the nodes that have died or left the cluster
+				fmt.Printf("Remove node : %s\n", prevMember)
+				tree.RemoveNode(prevMember, leader)
+			}
+		}
+		for member := range members {
+			_, found := slices.BinarySearch(prevMembershipList, member)
+			if found != true {
+				fmt.Printf("Add node : %s\n", member)
+				tree.AddNode(member, members[member].Address, leader)
+			}
+		}
 	}
-	fmt.Printf("Hieieieojtotjoe")
+
+	// Print the tree
+	tree.PrintTree()
+
+	prevMembershipList = membersList
+	fmt.Printf("Inside Multicast\n")
 
 	msg := MulticastMessage{
 		Query: query,
 		Args:  args,
 	}
 
+	fmt.Printf("Multicasting node : %s\n", nodeId)
 	multicastNode := tree.Root.FindNodeDFS(nodeId)
 	return multicastToChildren(multicastNode, msg)
 }
@@ -86,7 +118,7 @@ func sendMulticast(address string, msg MulticastMessage) error {
 }
 
 func recvMulticast(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf("Dfdffdsbkjfbdkgb")
+	fmt.Printf("Received Multicast\n")
 	var msg MulticastMessage
 
 	err := json.NewDecoder(r.Body).Decode(&msg)
