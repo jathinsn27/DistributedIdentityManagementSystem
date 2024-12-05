@@ -421,7 +421,6 @@ func startHTTPServer(node *Node) {
 		fmt.Fprintf(w, "# TYPE node_status gauge\n")
 		fmt.Fprintf(w, "node_status{node_id=\"%d\"} %d\n", node.ID, boolToInt(node.Leader))
 
-		// User data metrics dynamically queried from the database
 		if db != nil {
 			query := `SELECT email, R1, R2, R3, R4 FROM users`
 			rows, err := db.Query(query)
@@ -431,16 +430,15 @@ func startHTTPServer(node *Node) {
 			}
 			defer rows.Close()
 
+			fmt.Fprintf(w, "# HELP user_roles User role assignments by role\n")
+			fmt.Fprintf(w, "# TYPE user_roles gauge\n")
+
 			for rows.Next() {
 				var email string
 				var r1, r2, r3, r4 bool
 				if err := rows.Scan(&email, &r1, &r2, &r3, &r4); err == nil {
-					fmt.Fprintf(w, "# HELP user_roles User role assignments by role\n")
-					fmt.Fprintf(w, "# TYPE user_roles gauge\n")
-					fmt.Fprintf(w, "user_role_r1{node_id=\"%d\",email=\"%s\"} %d\n", node.ID, email, boolToInt(r1))
-					fmt.Fprintf(w, "user_role_r2{node_id=\"%d\",email=\"%s\"} %d\n", node.ID, email, boolToInt(r2))
-					fmt.Fprintf(w, "user_role_r3{node_id=\"%d\",email=\"%s\"} %d\n", node.ID, email, boolToInt(r3))
-					fmt.Fprintf(w, "user_role_r4{node_id=\"%d\",email=\"%s\"} %d\n", node.ID, email, boolToInt(r4))
+					roles := fmt.Sprintf("r1=%d,r2=%d,r3=%d,r4=%d", boolToInt(r1), boolToInt(r2), boolToInt(r3), boolToInt(r4))
+					fmt.Fprintf(w, "user_roles{node_id=\"%d\",email=\"%s\",roles=\"%s\"} 1\n", node.ID, email, roles)
 				} else {
 					log.Printf("Error scanning row: %v", err)
 				}
