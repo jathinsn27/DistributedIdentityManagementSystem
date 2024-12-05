@@ -27,7 +27,9 @@ func (s *SpanningTree) AddNode(nodeID, address, leaderID string) {
 		Children: make([]*SpanningTreeNode, 0),
 		mu:       sync.RWMutex{},
 	}
-
+	if s.Root.FindNodeDFS(nodeID) != nil {
+		return
+	}
 	if s.Root == nil {
 		// If there's no root, this node becomes the root
 		s.Root = node

@@ -176,7 +176,9 @@ func applyLogs(logs []map[string]interface{}) error {
 	for _, logEntry := range logs {
 		query := logEntry["query"].(string)
 		fmt.Printf("Applying log entry: %s\n", query)
-
+		// log the query.
+		_, err := db.Exec("INSERT INTO transaction_log (type, table_name, query) VALUES ($1, $2, $3)", logEntry["type"], logEntry["table"], logEntry["query"])
+		return err
 		// Execute the query on the local database
 		if _, err := db.Exec(query); err != nil {
 			return fmt.Errorf("error applying log entry: %v", err)
@@ -235,7 +237,7 @@ func handleQuery(w http.ResponseWriter, r *http.Request) {
 	if queryRequest.Type != QueryTypeSelect {
 		fmt.Printf("Query : %s\n", queryRequest.Type)
 		go func() {
-			err := multicast(query, args, os.Getenv("NODE_ID"))
+			err := multicast(query, args, os.Getenv("NODE_ID"), queryRequest.Table, queryRequest.Type)
 			if err != nil {
 
 			}

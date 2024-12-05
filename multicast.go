@@ -11,11 +11,14 @@ import (
 )
 
 type MulticastMessage struct {
-	Query string        `json:"query"`
-	Args  []interface{} `json:"args"`
+	Query     string        `json:"query"`
+	Args      []interface{} `json:"args"`
+	PID       int           `json:"pid"`
+	QueryType QueryType     `json:"queryType"`
+	Table     string        `json:"table"`
 }
 
-func multicast(query string, args []interface{}, nodeId string) error {
+func multicast(query string, args []interface{}, nodeId string, table string, queryType QueryType) error {
 	tree := GetGlobalTree()
 	members, e := getMembershipList(os.Getenv("MEMBERSHIP_HOST"))
 	if e != nil {
@@ -63,9 +66,18 @@ func multicast(query string, args []interface{}, nodeId string) error {
 	prevMembershipList = membersList
 	fmt.Printf("Inside Multicast\n")
 
+	lastProcessedId, err := getLastProcessedID()
+	if err != nil {
+		fmt.Printf("Failed to retrieve last processed Transaction\n")
+		return nil
+	}
+
 	msg := MulticastMessage{
-		Query: query,
-		Args:  args,
+		Query:     query,
+		Args:      args,
+		PID:       lastProcessedId,
+		QueryType: queryType,
+		Table:     table,
 	}
 
 	fmt.Printf("Multicasting node : %s\n", nodeId)
@@ -140,17 +152,41 @@ func recvMulticast(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := db.Query(msg.Query, msg.Args...)
+	lastProcessedId, err := getLastProcessedID()
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Error executing query: %v", err), http.StatusInternalServerError)
 		return
 	}
-	defer rows.Close()
 
-	fmt.Printf("Received Multicast Message: Query = %s, Args = %v", msg.Query, msg.Args)
+	fmt.Printf("Last Processed id : %d msg.PID : %d\n", lastProcessedId, msg.PID)
+	if lastProcessedId+1 != msg.PID {
+		fmt.Printf("Multicast missed -> Syncing data")
+		mem_list, _ := getMembershipList(os.Getenv("MEMBERSHIP_HOST"))
+		leader, _ := GetLeaderNode(mem_list)
+		logs, err := requestMissingLogs(leader.Address, lastProcessedId)
+		if err != nil {
+			fmt.Printf("Error requesting missing logs: %v\n", err)
+		}
 
+		err = applyLogs(logs)
+		if err != nil {
+			fmt.Printf("Error applying logs: %v\n", err)
+		}
+
+		fmt.Println("Node synchronized successfully.")
+	} else {
+
+		rows, err := db.Query(msg.Query, msg.Args...)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Error executing query: %v", err), http.StatusInternalServerError)
+			return
+		}
+		logTransaction(msg.QueryType, msg.Table, msg.Query, msg.Args...)
+		defer rows.Close()
+
+		fmt.Printf("Received Multicast Message: Query = %s, Args = %v", msg.Query, msg.Args)
+	}
 	NodeID := os.Getenv("NODE_ID")
-	go multicast(msg.Query, msg.Args, NodeID)
+	go multicast(msg.Query, msg.Args, NodeID, msg.Table, msg.QueryType)
 
 	w.WriteHeader(http.StatusOK)
 }
