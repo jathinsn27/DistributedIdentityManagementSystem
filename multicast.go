@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"slices"
+	"sort"
 	"sync"
 )
 
@@ -25,12 +25,15 @@ func multicast(query string, args []interface{}, nodeId string) error {
 	for k := range members {
 		membersList = append(membersList, k)
 	}
-	leader, e := GetLeaderId(members)
+	leader, e := GetLeaderNode(members)
+	fmt.Printf("prev list %v \n", prevMembershipList)
+	fmt.Printf("curr list %v \n", membersList)
+
 	if e != nil {
 		return fmt.Errorf("failed to get leader to construct tree")
 	}
 	if tree.Root == nil {
-		err := ConstructSpanningTree(tree, members, leader)
+		err := ConstructSpanningTree(tree, members, leader.ID)
 		if err != nil {
 			return fmt.Errorf("failed to construct spanning tree: %v", err)
 		}
@@ -39,14 +42,17 @@ func multicast(query string, args []interface{}, nodeId string) error {
 			if members[prevMember] == nil {
 				// Delete all the nodes that have died or left the cluster
 				fmt.Printf("Remove node : %s\n", prevMember)
-				tree.RemoveNode(prevMember, leader)
+				tree.RemoveNode(prevMember, leader.ID)
 			}
 		}
+		sort.Strings(prevMembershipList)
 		for member := range members {
-			_, found := slices.BinarySearch(prevMembershipList, member)
+			index := sort.SearchStrings(prevMembershipList, member)
+			found := index < len(prevMembershipList) && prevMembershipList[index] == member
+			fmt.Printf("found : %v , %s", found, member)
 			if found != true {
 				fmt.Printf("Add node : %s\n", member)
-				tree.AddNode(member, members[member].Address, leader)
+				tree.AddNode(member, members[member].Address, leader.ID)
 			}
 		}
 	}
@@ -64,6 +70,9 @@ func multicast(query string, args []interface{}, nodeId string) error {
 
 	fmt.Printf("Multicasting node : %s\n", nodeId)
 	multicastNode := tree.Root.FindNodeDFS(nodeId)
+	if multicastNode == nil {
+		return nil
+	}
 	return multicastToChildren(multicastNode, msg)
 }
 
@@ -72,6 +81,9 @@ func multicastToChildren(node *SpanningTreeNode, msg MulticastMessage) error {
 	errChan := make(chan error, len(node.Children))
 
 	for _, child := range node.Children {
+		if child == nil {
+			continue // Skip nil children
+		}
 		wg.Add(1)
 		go func(childNode *SpanningTreeNode) {
 			defer wg.Done()

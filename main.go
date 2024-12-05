@@ -16,7 +16,6 @@ import (
 
 const (
 	basePort          = 8000
-	maxNodes          = 4
 	httpPort          = 8080
 	heartbeatInterval = 2 * time.Second
 	leaderTimeout     = 4 * time.Second
@@ -51,6 +50,19 @@ type Message struct {
 	}
 }
 
+type SpanningTreeNode struct {
+	ID       string
+	address  string
+	Parent   *SpanningTreeNode
+	Children []*SpanningTreeNode
+	mu       sync.RWMutex
+}
+
+type SpanningTree struct {
+	Root *SpanningTreeNode
+	mu   sync.RWMutex
+}
+
 type VoteRequest struct {
 	CandidateID int
 	Term        int
@@ -61,9 +73,27 @@ type VoteResponse struct {
 	Term        int
 }
 
+func InitGlobalTree() {
+	treeOnce.Do(func() {
+		globalTree = &SpanningTree{
+			Root: nil,
+			mu:   sync.RWMutex{},
+		}
+	})
+}
+
+// GetGlobalTree returns the global tree, initializing it if necessary
+func GetGlobalTree() *SpanningTree {
+	InitGlobalTree()
+	return globalTree
+}
+
 var (
-	lastHeartbeat  time.Time
-	heartbeatMutex sync.RWMutex
+	lastHeartbeat      time.Time
+	heartbeatMutex     sync.RWMutex
+	globalTree         *SpanningTree
+	treeOnce           sync.Once
+	prevMembershipList []string
 )
 
 func main() {
@@ -110,9 +140,10 @@ func main() {
 
 		fmt.Printf("Node starting with last processed ID %d\n", lastProcessedID)
 
-		leaderAddress := "node-1:8080" // Replace with actual leader address
+		mem_list, _ := getMembershipList(membershipHost)
+		leader, _ := GetLeaderNode(mem_list) // Replace with actual leader address
 
-		logs, err := requestMissingLogs(leaderAddress, lastProcessedID)
+		logs, err := requestMissingLogs(leader.Address, lastProcessedID)
 		if err != nil {
 			log.Fatalf("Error requesting missing logs: %v\n", err)
 		}
@@ -142,6 +173,29 @@ func main() {
 
 		time.Sleep(heartbeatInterval)
 	}
+}
+
+func getMembershipList(membershipHost string) (map[string]*MemberInfo1, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s/members", membershipHost))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get members: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var members map[string]*MemberInfo1
+	if err := json.NewDecoder(resp.Body).Decode(&members); err != nil {
+		return nil, fmt.Errorf("failed to decode members: %v", err)
+	}
+	return members, nil
+}
+
+func GetLeaderNode(members map[string]*MemberInfo1) (*MemberInfo1, error) {
+	for _, memberInfo := range members {
+		if memberInfo.IsLeader {
+			return memberInfo, nil
+		}
+	}
+	return nil, fmt.Errorf("leader not found")
 }
 
 func registerWithMembership(node *Node) error {
@@ -425,6 +479,8 @@ func startHTTPServer(node *Node) {
 
 	http.HandleFunc("/query", handleQuery)
 
+	http.HandleFunc("/recvMulticast", recvMulticast)
+
 	http.HandleFunc("/logs", func(w http.ResponseWriter, r *http.Request) {
 		if !node.Leader {
 			http.Error(w, "Only leader can serve logs", http.StatusForbidden)
@@ -455,7 +511,7 @@ func startHTTPServer(node *Node) {
 }
 
 func discoverExistingLeader(node *Node) bool {
-	for i := 1; i <= maxNodes; i++ {
+	for i := range node.activeNodes {
 		if pingNode(i) {
 			leader, term, err := askForLeader(i)
 			if err == nil && leader > 0 {
@@ -529,7 +585,7 @@ func sendHeartbeats(node *Node) {
 		},
 	}
 
-	for i := 1; i <= maxNodes; i++ {
+	for i := range node.activeNodes {
 		if i != nodeID {
 			go func(targetID int) {
 				conn, err := net.DialTimeout("tcp", fmt.Sprintf("node-%d:%d", targetID, basePort+targetID), time.Second)

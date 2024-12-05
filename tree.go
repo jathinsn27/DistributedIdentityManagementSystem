@@ -90,6 +90,9 @@ func (s *SpanningTree) RemoveNode(nodeID string, leaderID string) {
 				return node.Children[0]
 			} else {
 				successor := findMin(node.Children[1])
+				if successor == nil || successor.ID == node.ID {
+					return node.Children[0]
+				}
 				node.ID = successor.ID
 				node.address = successor.address
 				node.Children[1] = removeNode(node.Children[1], successor.ID)
@@ -108,6 +111,9 @@ func (s *SpanningTree) RemoveNode(nodeID string, leaderID string) {
 // Helper function to find minimum value in a subtree (in-order successor)
 func findMin(node *SpanningTreeNode) *SpanningTreeNode {
 	current := node
+	if current == nil {
+		return nil
+	}
 	for len(current.Children) > 0 && current.Children[0] != nil {
 		current = current.Children[0]
 	}
@@ -146,7 +152,7 @@ func rebalance(node *SpanningTreeNode) *SpanningTreeNode {
 
 	// Left heavy
 	if balance > 1 {
-		if len(node.Children[0].Children) > 0 && height(node.Children[0].Children[0]) >= height(node.Children[0].Children[1]) {
+		if len(node.Children[0].Children) > 1 && height(node.Children[0].Children[0]) >= height(node.Children[0].Children[1]) {
 			// Left-Left case
 			return rotateRight(node)
 		} else {
@@ -300,15 +306,6 @@ func ConstructSpanningTree(tree *SpanningTree, members map[string]*MemberInfo1, 
 	return nil
 }
 
-func GetLeaderId(members map[string]*MemberInfo1) (string, error) {
-	for _, memberInfo := range members {
-		if memberInfo.IsLeader {
-			return memberInfo.ID, nil
-		}
-	}
-	return "", fmt.Errorf("leader not found")
-}
-
 func (node *SpanningTreeNode) FindNodeDFS(targetID string) *SpanningTreeNode {
 	if node == nil {
 		return nil
@@ -322,6 +319,9 @@ func (node *SpanningTreeNode) FindNodeDFS(targetID string) *SpanningTreeNode {
 		stack = stack[:len(stack)-1]
 
 		// Check if this is the target node
+		if current == nil {
+			return nil
+		}
 		if current.ID == targetID {
 			return current
 		}

@@ -232,6 +232,16 @@ func handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if queryRequest.Type != QueryTypeSelect {
+		fmt.Printf("Query : %s\n", queryRequest.Type)
+		go func() {
+			err := multicast(query, args, os.Getenv("NODE_ID"))
+			if err != nil {
+
+			}
+		}()
+	}
+
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error executing query: %v", err), http.StatusInternalServerError)
@@ -333,17 +343,9 @@ func buildUpdateQuery(req QueryRequest) (string, []interface{}) {
 
 func buildDeleteQuery(req QueryRequest) (string, []interface{}) {
 	query := fmt.Sprintf("DELETE FROM %s", req.Table)
-
-	if req.DeleteAll {
-		return query, nil // Return the query without WHERE clause
-	}
-
-	if len(req.Where) > 0 {
-		whereClause, args := buildWhereClause(req.Where)
-		query += " WHERE " + whereClause
-		return query, args
-	}
-	return query, nil
+	whereClause, args := buildWhereClause(req.Where)
+	query += " WHERE " + whereClause
+	return query, args
 }
 
 func buildWhereClause(where map[string]string) (string, []interface{}) {
