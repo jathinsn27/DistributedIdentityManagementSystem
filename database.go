@@ -110,7 +110,17 @@ func logTransaction(queryType QueryType, table string, query string, params ...i
 func formatQueryWithParams(query string, params []interface{}) string {
 	for i, param := range params {
 		placeholder := fmt.Sprintf("$%d", i+1)
-		value := fmt.Sprintf("'%v'", param)
+		var value string
+
+		switch v := param.(type) {
+		case string:
+			value = fmt.Sprintf("'%s'", v)
+		case bool:
+			value = fmt.Sprintf("%t", v) // Use boolean as `true`/`false`
+		default:
+			value = fmt.Sprintf("%v", v)
+		}
+
 		query = strings.Replace(query, placeholder, value, 1)
 	}
 	return query
@@ -219,6 +229,7 @@ func handleQuery(w http.ResponseWriter, r *http.Request) {
 	var query string
 	var args []interface{}
 
+	// Build the query and log the transaction
 	switch queryRequest.Type {
 	case QueryTypeSelect:
 		query, args = buildSelectQuery(queryRequest)
@@ -236,6 +247,42 @@ func handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Debug logging
+	fmt.Printf("Executing query: %s\nWith args: %v\n", query, args)
+
+	// Handle SELECT queries
+	if queryRequest.Type == QueryTypeSelect {
+		rows, err := db.Query(query, args...)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Error executing query: %v", err), http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		var result []map[string]interface{}
+		columns, _ := rows.Columns()
+		for rows.Next() {
+			values := make([]interface{}, len(columns))
+			pointers := make([]interface{}, len(columns))
+			for i := range values {
+				pointers[i] = &values[i]
+			}
+			err := rows.Scan(pointers...)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Error scanning row: %v", err), http.StatusInternalServerError)
+				return
+			}
+			row := make(map[string]interface{})
+			for i, column := range columns {
+				row[column] = values[i]
+			}
+			result = append(result, row)
+		}
+
+		json.NewEncoder(w).Encode(result)
+		return
+	}
+
 	if queryRequest.Type != QueryTypeSelect {
 		fmt.Printf("Query : %s\n", queryRequest.Type)
 		go func() {
@@ -246,34 +293,26 @@ func handleQuery(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 
-	rows, err := db.Query(query, args...)
+	// Handle INSERT, UPDATE, DELETE queries
+	result, err := db.Exec(query, args...)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error executing query: %v", err), http.StatusInternalServerError)
 		return
 	}
-	defer rows.Close()
 
-	var result []map[string]interface{}
-	columns, _ := rows.Columns()
-	for rows.Next() {
-		values := make([]interface{}, len(columns))
-		pointers := make([]interface{}, len(columns))
-		for i := range values {
-			pointers[i] = &values[i]
-		}
-		err := rows.Scan(pointers...)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Error scanning row: %v", err), http.StatusInternalServerError)
-			return
-		}
-		row := make(map[string]interface{})
-		for i, column := range columns {
-			row[column] = values[i]
-		}
-		result = append(result, row)
+	rowCount, err := result.RowsAffected()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error fetching rows affected: %v", err), http.StatusInternalServerError)
+		return
 	}
 
-	json.NewEncoder(w).Encode(result)
+	// Return a success response with rows affected
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]interface{}{
+		"message":       "Query executed successfully",
+		"rows_affected": rowCount,
+	}
+	json.NewEncoder(w).Encode(response)
 }
 
 func validateQueryRequest(req QueryRequest) error {
@@ -333,15 +372,28 @@ func buildUpdateQuery(req QueryRequest) (string, []interface{}) {
 	var setClauses []string
 	var args []interface{}
 	i := 1
+
+	// Build the SET clause
 	for col, val := range req.Values {
-		setClauses = append(setClauses, fmt.Sprintf("%s = $%d", col, i))
-		args = append(args, val)
+		if col == "R1" || col == "R2" || col == "R3" || col == "R4" {
+			// Explicitly convert string to boolean
+			boolVal := strings.ToLower(fmt.Sprintf("%v", val)) == "true"
+			setClauses = append(setClauses, fmt.Sprintf("%s = $%d", col, i))
+			args = append(args, boolVal) // Append boolean
+		} else {
+			setClauses = append(setClauses, fmt.Sprintf("%s = $%d", col, i))
+			args = append(args, val) // Append as-is
+		}
 		i++
 	}
-	query := fmt.Sprintf("UPDATE %s SET %s", req.Table, strings.Join(setClauses, ", "))
-	whereClause, whereArgs := buildWhereClause(req.Where)
-	query += " WHERE " + whereClause
-	args = append(args, whereArgs...)
+
+	// Build the WHERE clause, continuing index from SET
+	whereClause, whereArgs := buildWhereClause(req.Where, i)
+
+	// Append the placeholders for WHERE clause
+	query := fmt.Sprintf("UPDATE %s SET %s WHERE %s", req.Table, strings.Join(setClauses, ", "), whereClause)
+	args = append(args, whereArgs...) // Append WHERE clause arguments
+
 	return query, args
 }
 
@@ -352,14 +404,22 @@ func buildDeleteQuery(req QueryRequest) (string, []interface{}) {
 	return query, args
 }
 
-func buildWhereClause(where map[string]string) (string, []interface{}) {
+func buildWhereClause(where map[string]string, startIndex ...int) (string, []interface{}) {
 	var clauses []string
 	var args []interface{}
+
+	// Determine the starting index; default to 1 if not provided
 	i := 1
+	if len(startIndex) > 0 {
+		i = startIndex[0]
+	}
+
+	// Build WHERE clause
 	for col, val := range where {
 		clauses = append(clauses, fmt.Sprintf("%s = $%d", col, i))
 		args = append(args, val)
 		i++
 	}
+
 	return strings.Join(clauses, " AND "), args
 }
