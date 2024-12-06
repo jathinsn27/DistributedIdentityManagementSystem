@@ -223,3 +223,160 @@ func buildWhereClause(where map[string]string) (string, []interface{}) {
 	}
 	return strings.Join(clauses, " AND "), args
 }
+
+func handleViewAllUser(w http.ResponseWriter, r *http.Request) {
+	query := `SELECT email, R1, R2, R3, R4 FROM users`
+	rows, err := db.Query(query)
+	if err != nil {
+		http.Error(w, "Failed to fetch users", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var users []struct {
+		Email string `json:"email"`
+		R1    bool   `json:"R1"`
+		R2    bool   `json:"R2"`
+		R3    bool   `json:"R3"`
+		R4    bool   `json:"R4"`
+	}
+
+	for rows.Next() {
+		var user struct {
+			Email string `json:"email"`
+			R1    bool   `json:"R1"`
+			R2    bool   `json:"R2"`
+			R3    bool   `json:"R3"`
+			R4    bool   `json:"R4"`
+		}
+		if err := rows.Scan(&user.Email, &user.R1, &user.R2, &user.R3, &user.R4); err != nil {
+			http.Error(w, "Error reading user data", http.StatusInternalServerError)
+			return
+		}
+		users = append(users, user)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(users)
+}
+
+// func handleInsertUser(w http.ResponseWriter, r *http.Request) {
+// 	var request struct {
+// 		Type   string `json:"type"`
+// 		Table  string `json:"table"`
+// 		Values struct {
+// 			Email    string `json:"email"`
+// 			Password string `json:"password"`
+// 			R1       string `json:"R1"`
+// 			R2       string `json:"R2"`
+// 			R3       string `json:"R3"`
+// 			R4       string `json:"R4"`
+// 		} `json:"values"`
+// 	}
+
+// 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+// 		http.Error(w, "Invalid request format", http.StatusBadRequest)
+// 		return
+// 	}
+
+// 	// Convert string boolean to actual boolean
+// 	r1, _ := strconv.ParseBool(request.Values.R1)
+// 	r2, _ := strconv.ParseBool(request.Values.R2)
+// 	r3, _ := strconv.ParseBool(request.Values.R3)
+// 	r4, _ := strconv.ParseBool(request.Values.R4)
+
+// 	query := `INSERT INTO users (email, password, R1, R2, R3, R4)
+//               VALUES ($1, $2, $3, $4, $5, $6)`
+
+// 	_, err := db.Exec(query,
+// 		request.Values.Email,
+// 		request.Values.Password,
+// 		r1, r2, r3, r4)
+
+// 	if err != nil {
+// 		http.Error(w, "Failed to insert user", http.StatusInternalServerError)
+// 		return
+// 	}
+
+// 	w.WriteHeader(http.StatusOK)
+// 	json.NewEncoder(w).Encode(map[string]string{
+// 		"message": "User inserted successfully",
+// 	})
+// }
+
+// func handleViewUser(w http.ResponseWriter, r *http.Request) {
+// 	var request struct {
+// 		Type   string   `json:"type"`
+// 		Table  string   `json:"table"`
+// 		Fields []string `json:"fields"`
+// 		Where  struct {
+// 			Email string `json:"email"`
+// 		} `json:"where"`
+// 	}
+
+// 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+// 		http.Error(w, "Invalid request format", http.StatusBadRequest)
+// 		return
+// 	}
+
+// 	query := `SELECT email, R1, R2, R3, R4 FROM users WHERE email = $1`
+// 	row := db.QueryRow(query, request.Where.Email)
+
+// 	var user struct {
+// 		Email string `json:"email"`
+// 		R1    bool   `json:"R1"`
+// 		R2    bool   `json:"R2"`
+// 		R3    bool   `json:"R3"`
+// 		R4    bool   `json:"R4"`
+// 	}
+
+// 	if err := row.Scan(&user.Email, &user.R1, &user.R2, &user.R3, &user.R4); err != nil {
+// 		http.Error(w, "User not found", http.StatusNotFound)
+// 		return
+// 	}
+
+// 	w.WriteHeader(http.StatusOK)
+// 	json.NewEncoder(w).Encode(user)
+// }
+
+func handleUpdatePermissions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var queryRequest QueryRequest
+	if err := json.NewDecoder(r.Body).Decode(&queryRequest); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	queryRequest.Type = QueryTypeUpdate
+	queryRequest.Table = "users"
+
+	// Validate the request using existing validation function
+	if err := validateQueryRequest(queryRequest); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Use the existing query builder
+	query, args := buildUpdateQuery(queryRequest)
+	result, err := db.Exec(query, args...)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error executing query: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Permissions updated successfully",
+	})
+}

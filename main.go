@@ -409,7 +409,155 @@ func startHTTPServer(node *Node) {
 		json.NewEncoder(w).Encode(status)
 	})
 
-	http.HandleFunc("/query", handleQuery)
+	http.HandleFunc("/admin/users", handleViewAllUser)
+	http.HandleFunc("/admin/permissions", handleUpdatePermissions)
+
+	// New SELECT endpoint using GET
+	http.HandleFunc("/admin/user", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var queryRequest QueryRequest
+		if err := json.NewDecoder(r.Body).Decode(&queryRequest); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		queryRequest.Type = QueryTypeSelect
+		if err := validateQueryRequest(queryRequest); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		query, args := buildSelectQuery(queryRequest)
+		rows, err := db.Query(query, args...)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Error executing query: %v", err), http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		var result []map[string]interface{}
+		columns, _ := rows.Columns()
+
+		if rows.Next() {
+			values := make([]interface{}, len(columns))
+			pointers := make([]interface{}, len(columns))
+			for i := range values {
+				pointers[i] = &values[i]
+			}
+
+			if err := rows.Scan(pointers...); err != nil {
+				http.Error(w, fmt.Sprintf("Error scanning row: %v", err), http.StatusInternalServerError)
+				return
+			}
+
+			row := make(map[string]interface{})
+			for i, column := range columns {
+				row[column] = values[i]
+			}
+			result = append(result, row)
+		} else {
+			http.Error(w, "User not found", http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+	})
+
+	// New INSERT endpoint using POST
+	http.HandleFunc("/admin/insert", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var queryRequest QueryRequest
+		if err := json.NewDecoder(r.Body).Decode(&queryRequest); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if queryRequest.Type != QueryTypeInsert {
+			http.Error(w, "Invalid query type", http.StatusBadRequest)
+			return
+		}
+
+		query, args := buildInsertQuery(queryRequest)
+		_, err := db.Exec(query, args...)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Error executing query: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": "User inserted successfully",
+		})
+	})
+
+	// http.HandleFunc("/admin/update_permissions", func(w http.ResponseWriter, r *http.Request) {
+	// 	if r.Method != http.MethodPost {
+	// 		http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
+	// 		return
+	// 	}
+
+	// 	// Use a temporary struct to parse the JSON with boolean values
+	// 	var tempRequest struct {
+	// 		Type   string            `json:"type"`
+	// 		Table  string            `json:"table"`
+	// 		Values map[string]bool   `json:"values"`
+	// 		Where  map[string]string `json:"where"`
+	// 	}
+
+	// 	if err := json.NewDecoder(r.Body).Decode(&tempRequest); err != nil {
+	// 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+	// 		return
+	// 	}
+
+	// 	// Convert to QueryRequest with string values
+	// 	queryRequest := QueryRequest{
+	// 		Type:   QueryTypeUpdate,
+	// 		Table:  tempRequest.Table,
+	// 		Values: make(map[string]string),
+	// 		Where:  tempRequest.Where,
+	// 	}
+
+	// 	// Convert boolean values to strings
+	// 	for key, value := range tempRequest.Values {
+	// 		if value {
+	// 			queryRequest.Values[key] = "TRUE"
+	// 		} else {
+	// 			queryRequest.Values[key] = "FALSE"
+	// 		}
+	// 	}
+
+	// 	if err := validateQueryRequest(queryRequest); err != nil {
+	// 		http.Error(w, err.Error(), http.StatusBadRequest)
+	// 		return
+	// 	}
+
+	// 	query, args := buildUpdateQuery(queryRequest)
+	// 	result, err := db.Exec(query, args...)
+	// 	if err != nil {
+	// 		http.Error(w, fmt.Sprintf("Error executing query: %v", err), http.StatusInternalServerError)
+	// 		return
+	// 	}
+
+	// 	rowsAffected, _ := result.RowsAffected()
+	// 	if rowsAffected == 0 {
+	// 		http.Error(w, "User not found", http.StatusNotFound)
+	// 		return
+	// 	}
+
+	// 	w.WriteHeader(http.StatusOK)
+	// 	json.NewEncoder(w).Encode(map[string]string{
+	// 		"message": "Permissions updated successfully",
+	// 	})
+	// })
 
 	http.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 
