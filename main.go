@@ -94,6 +94,7 @@ var (
 	globalTree         *SpanningTree
 	treeOnce           sync.Once
 	prevMembershipList []string
+	recovery           bool
 )
 
 func main() {
@@ -132,7 +133,11 @@ func main() {
 
 	if !discoverExistingLeader(node) {
 		startElection(node)
+		recovery = false
 	} else {
+		recovery = true
+		tree := GetGlobalTree()
+
 		lastProcessedID, err := getLastProcessedID()
 		if err != nil {
 			log.Fatalf("Error reading last processed ID: %v\n", err)
@@ -142,7 +147,11 @@ func main() {
 
 		mem_list, _ := getMembershipList(membershipHost)
 		leader, _ := GetLeaderNode(mem_list) // Replace with actual leader address
-
+		fmt.Printf("leader : %d", leader.ID)
+		tError := ConstructSpanningTree(tree, mem_list, leader.ID)
+		if tError != nil {
+			fmt.Printf("Error retrieving tree post recovery")
+		}
 		logs, err := requestMissingLogs(leader.Address, lastProcessedID)
 		if err != nil {
 			log.Fatalf("Error requesting missing logs: %v\n", err)
@@ -480,6 +489,8 @@ func startHTTPServer(node *Node) {
 	http.HandleFunc("/query", handleQuery)
 
 	http.HandleFunc("/recvMulticast", recvMulticast)
+
+	http.HandleFunc("/getTreeFromLeader", GetTreeFromLeader)
 
 	http.HandleFunc("/logs", func(w http.ResponseWriter, r *http.Request) {
 		if !node.Leader {
