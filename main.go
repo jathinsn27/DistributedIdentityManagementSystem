@@ -460,6 +460,13 @@ func recognizeLeader(node *Node) {
 	}
 }
 
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 func startHTTPServer(node *Node) {
 	http.HandleFunc("/leader", func(w http.ResponseWriter, r *http.Request) {
 		node.mutex.RLock()
@@ -513,6 +520,60 @@ func startHTTPServer(node *Node) {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(logs)
+	})
+
+	http.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+
+		node.mutex.RLock()
+		defer node.mutex.RUnlock()
+
+		// Node status metrics
+		fmt.Fprintf(w, "# HELP node_status Node status (1 for leader, 0 for follower)\n")
+		fmt.Fprintf(w, "# TYPE node_status gauge\n")
+		fmt.Fprintf(w, "node_status{node_id=\"%d\"} %d\n", node.ID, boolToInt(node.Leader))
+
+		if db != nil {
+			query := `SELECT email, R1, R2, R3, R4 FROM users`
+			rows, err := db.Query(query)
+			if err != nil {
+				log.Printf("Database query error: %v", err)
+				return
+			}
+			defer rows.Close()
+
+			fmt.Fprintf(w, "# HELP user_roles User role assignments by role\n")
+			fmt.Fprintf(w, "# TYPE user_roles gauge\n")
+
+			for rows.Next() {
+				var email string
+				var r1, r2, r3, r4 bool
+				if err := rows.Scan(&email, &r1, &r2, &r3, &r4); err == nil {
+					roles := fmt.Sprintf("r1=%d,r2=%d,r3=%d,r4=%d", boolToInt(r1), boolToInt(r2), boolToInt(r3), boolToInt(r4))
+					fmt.Fprintf(w, "user_roles{node_id=\"%d\",email=\"%s\",roles=\"%s\"} 1\n", node.ID, email, roles)
+				} else {
+					log.Printf("Error scanning row: %v", err)
+				}
+			}
+		} else {
+			log.Println("Database connection is nil, skipping user metrics")
+		}
+
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+
+		// Term metric
+		fmt.Fprintf(w, "# HELP node_term Current term number (used in leader election)\n")
+		fmt.Fprintf(w, "# TYPE node_term gauge\n")
+		fmt.Fprintf(w, "node_term{node_id=\"%d\"} %d\n", node.ID, node.term)
+
+		// Active nodes metric
+		fmt.Fprintf(w, "# HELP active_nodes Number of active nodes in the cluster\n")
+		fmt.Fprintf(w, "# TYPE active_nodes gauge\n")
+		fmt.Fprintf(w, "active_nodes{node_id=\"%d\"} %d\n", node.ID, len(node.activeNodes))
+
+		// Current leader metric
+		fmt.Fprintf(w, "# HELP current_leader The ID of the current leader node\n")
+		fmt.Fprintf(w, "# TYPE current_leader gauge\n")
+		fmt.Fprintf(w, "current_leader{node_id=\"%d\"} %d\n", node.ID, node.lastKnownLeader)
 	})
 
 	fmt.Printf("Starting HTTP server on port %d\n", httpPort)
