@@ -1,7 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"net/http"
+	"os"
 	"sort"
 	"sync"
 )
@@ -16,6 +21,20 @@ func GetTree() *SpanningTree {
 	return globalTree
 }
 
+type GetTreeRequest struct {
+	Leader  string `json:"leader"`
+	Address string `json:"address"`
+	Node    string `json:"recoveredNode"`
+	Naddr   string `json:"naddr"`
+}
+
+type SerializableNode struct {
+	ID       string             `json:"id"`
+	Address  string             `json:"address"`
+	ParentID string             `json:"parent_id,omitempty"`
+	Children []SerializableNode `json:"children,omitempty"`
+}
+
 func (s *SpanningTree) AddNode(nodeID, address, leaderID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -27,9 +46,11 @@ func (s *SpanningTree) AddNode(nodeID, address, leaderID string) {
 		Children: make([]*SpanningTreeNode, 0),
 		mu:       sync.RWMutex{},
 	}
+
 	if s.Root.FindNodeDFS(nodeID) != nil {
 		return
 	}
+
 	if s.Root == nil {
 		// If there's no root, this node becomes the root
 		s.Root = node
@@ -290,7 +311,55 @@ func (s *SpanningTree) findParent() *SpanningTreeNode {
 	return findNodeWithFewestChildren(s.Root)
 }
 
+func GetLeaderTree(leader string, address string, id string, addr string) error {
+	getTreeReq := &GetTreeRequest{
+		Leader:  leader,
+		Address: address,
+		Node:    id,
+		Naddr:   addr,
+	}
+	jsonData, err := json.Marshal(getTreeReq)
+	if err != nil {
+		return fmt.Errorf("failed to marshal get Tree message: %v", err)
+	}
+
+	fmt.Printf("http://%s/getTreeFromLeader", address)
+	resp, err := http.Post(fmt.Sprintf("http://%s/getTreeFromLeader", address), "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to send multicast: %v", err)
+	}
+	defer resp.Body.Close()
+	tree := GetGlobalTree()
+	body, err := ioutil.ReadAll(resp.Body)
+	stree, err := ReconstructTree(body)
+	tree.Root = stree.Root
+	return nil
+}
+
+func GetTreeFromLeader(w http.ResponseWriter, r *http.Request) {
+	fmt.Printf("Received Request for Tree\n")
+	var req GetTreeRequest
+
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		fmt.Printf("Error decoding GetTree request: %v", err)
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+	tree := GetGlobalTree()
+	tree.AddNode(req.Node, req.Naddr, req.Leader)
+	serialTree, err := tree.Root.ToSerializable()
+	w.Header().Set("Content-Type", "application/json")
+	prevMembershipList = append(prevMembershipList, req.Node)
+	json.NewEncoder(w).Encode(serialTree)
+}
+
 func ConstructSpanningTree(tree *SpanningTree, members map[string]*MemberInfo1, leader string) error {
+	fmt.Printf("Recovery : %v\n", recovery)
+	if recovery == true {
+		id := fmt.Sprint(os.Getenv("NODE_ID"))
+		return GetLeaderTree(leader, members[leader].Address, id, members[id].Address)
+	}
 	keys := make([]string, 0, len(members))
 	for k := range members {
 		keys = append(keys, k)
@@ -309,29 +378,47 @@ func ConstructSpanningTree(tree *SpanningTree, members map[string]*MemberInfo1, 
 }
 
 func (node *SpanningTreeNode) FindNodeDFS(targetID string) *SpanningTreeNode {
-	if node == nil {
+	if node == nil || targetID == "" {
 		return nil
 	}
 
+	// Initialize stack and visited map
 	stack := []*SpanningTreeNode{node}
+	visited := make(map[string]bool)
 
 	for len(stack) > 0 {
 		// Pop the top node from stack
 		current := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 
-		// Check if this is the target node
+		// Skip if node is nil or already visited
 		if current == nil {
-			return nil
+			continue
 		}
-		if current.ID == targetID {
+
+		current.mu.RLock()
+		nodeID := current.ID
+
+		// Check if already visited
+		if visited[nodeID] {
+			current.mu.RUnlock()
+			continue
+		}
+
+		// Mark as visited
+		visited[nodeID] = true
+
+		// Check if this is the target node
+		if nodeID == targetID {
+			current.mu.RUnlock()
 			return current
 		}
 
-		// Add children to stack
-		current.mu.RLock()
-		for i := 0; i < len(current.Children); i++ {
-			stack = append(stack, current.Children[i])
+		// Add unvisited children to stack
+		for i := len(current.Children) - 1; i >= 0; i-- {
+			if child := current.Children[i]; child != nil && !visited[child.ID] {
+				stack = append(stack, child)
+			}
 		}
 		current.mu.RUnlock()
 	}
@@ -380,4 +467,67 @@ func (st *SpanningTree) printDetailedNode(node *SpanningTreeNode, prefix string,
 		isLastChild := i == len(node.Children)-1
 		st.printDetailedNode(child, childPrefix, isLastChild)
 	}
+}
+
+func (node *SpanningTreeNode) ToSerializable() (SerializableNode, error) {
+	if node == nil {
+		return SerializableNode{}, nil
+	}
+
+	node.mu.RLock()
+	defer node.mu.RUnlock()
+
+	serialNode := SerializableNode{
+		ID:      node.ID,
+		Address: node.address,
+	}
+
+	if node.Parent != nil {
+		serialNode.ParentID = node.Parent.ID
+	}
+
+	// Only serialize non-nil children
+	for _, child := range node.Children {
+		if child == nil {
+			continue
+		}
+		serializedChild, err := child.ToSerializable()
+		if err != nil {
+			return SerializableNode{}, fmt.Errorf("error serializing child node: %v", err)
+		}
+		serialNode.Children = append(serialNode.Children, serializedChild)
+	}
+
+	return serialNode, nil
+}
+
+// Function to reconstruct the tree from JSON
+func ReconstructTree(data []byte) (*SpanningTree, error) {
+	var serialNode SerializableNode
+	if err := json.Unmarshal(data, &serialNode); err != nil {
+		return nil, err
+	}
+
+	nodeMap := make(map[string]*SpanningTreeNode)
+	root := reconstructNode(&serialNode, nil, nodeMap)
+
+	return &SpanningTree{Root: root}, nil
+}
+
+func reconstructNode(serialNode *SerializableNode, parent *SpanningTreeNode, nodeMap map[string]*SpanningTreeNode) *SpanningTreeNode {
+	node := &SpanningTreeNode{
+		ID:       serialNode.ID,
+		address:  serialNode.Address,
+		Parent:   parent,
+		Children: make([]*SpanningTreeNode, 0),
+	}
+
+	nodeMap[node.ID] = node
+
+	for _, child := range serialNode.Children {
+		childNode := reconstructNode(&child, node, nodeMap)
+		node.Children = append(node.Children, childNode)
+	}
+
+	return node
 }

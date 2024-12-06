@@ -178,7 +178,9 @@ func applyLogs(logs []map[string]interface{}) error {
 		fmt.Printf("Applying log entry: %s\n", query)
 		// log the query.
 		_, err := db.Exec("INSERT INTO transaction_log (type, table_name, query) VALUES ($1, $2, $3)", logEntry["type"], logEntry["table"], logEntry["query"])
-		return err
+		if err != nil {
+			return nil
+		}
 		// Execute the query on the local database
 		if _, err := db.Exec(query); err != nil {
 			return fmt.Errorf("error applying log entry: %v", err)
