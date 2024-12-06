@@ -493,7 +493,12 @@ func startHTTPServer(node *Node) {
 		json.NewEncoder(w).Encode(status)
 	})
 
-	http.HandleFunc("/query", handleQuery)
+	// http.HandleFunc("/query", handleQuery)
+
+	http.HandleFunc("/admin/users", handleViewAllUser)
+	http.HandleFunc("/admin/user", handleUser)
+	http.HandleFunc("/admin/insert", handleInsertUser)
+	http.HandleFunc("/admin/permissions", handleUpdatePermissions)
 
 	http.HandleFunc("/recvMulticast", recvMulticast)
 

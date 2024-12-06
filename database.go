@@ -208,102 +208,102 @@ func getLastProcessedID() (int, error) {
 	return lastID, nil
 }
 
-func handleQuery(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
-		return
-	}
+// func handleQuery(w http.ResponseWriter, r *http.Request) {
+// 	if r.Method != http.MethodPost {
+// 		http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
+// 		return
+// 	}
 
-	var queryRequest QueryRequest
-	err := json.NewDecoder(r.Body).Decode(&queryRequest)
-	if err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
+// 	var queryRequest QueryRequest
+// 	err := json.NewDecoder(r.Body).Decode(&queryRequest)
+// 	if err != nil {
+// 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+// 		return
+// 	}
 
-	if err := validateQueryRequest(queryRequest); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+// 	if err := validateQueryRequest(queryRequest); err != nil {
+// 		http.Error(w, err.Error(), http.StatusBadRequest)
+// 		return
+// 	}
 
-	var query string
-	var args []interface{}
+// 	var query string
+// 	var args []interface{}
 
-	// Build the query and log the transaction
-	switch queryRequest.Type {
-	case QueryTypeSelect:
-		query, args = buildSelectQuery(queryRequest)
-	case QueryTypeInsert:
-		query, args = buildInsertQuery(queryRequest)
-		logTransaction(QueryTypeInsert, queryRequest.Table, query, args...)
-	case QueryTypeUpdate:
-		query, args = buildUpdateQuery(queryRequest)
-		logTransaction(QueryTypeUpdate, queryRequest.Table, query, args...)
-	case QueryTypeDelete:
-		query, args = buildDeleteQuery(queryRequest)
-		logTransaction(QueryTypeDelete, queryRequest.Table, query, args...)
-	default:
-		http.Error(w, "Invalid query type", http.StatusBadRequest)
-		return
-	}
+// 	// Build the query and log the transaction
+// 	switch queryRequest.Type {
+// 	case QueryTypeSelect:
+// 		query, args = buildSelectQuery(queryRequest)
+// 	case QueryTypeInsert:
+// 		query, args = buildInsertQuery(queryRequest)
+// 		logTransaction(QueryTypeInsert, queryRequest.Table, query, args...)
+// 	case QueryTypeUpdate:
+// 		query, args = buildUpdateQuery(queryRequest)
+// 		logTransaction(QueryTypeUpdate, queryRequest.Table, query, args...)
+// 	case QueryTypeDelete:
+// 		query, args = buildDeleteQuery(queryRequest)
+// 		logTransaction(QueryTypeDelete, queryRequest.Table, query, args...)
+// 	default:
+// 		http.Error(w, "Invalid query type", http.StatusBadRequest)
+// 		return
+// 	}
 
-	// Debug logging
-	fmt.Printf("Executing query: %s\nWith args: %v\n", query, args)
+// 	// Debug logging
+// 	fmt.Printf("Executing query: %s\nWith args: %v\n", query, args)
 
-	// Handle SELECT queries
-	if queryRequest.Type == QueryTypeSelect {
-		rows, err := db.Query(query, args...)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Error executing query: %v", err), http.StatusInternalServerError)
-			return
-		}
-		defer rows.Close()
+// 	// Handle SELECT queries
+// 	if queryRequest.Type == QueryTypeSelect {
+// 		rows, err := db.Query(query, args...)
+// 		if err != nil {
+// 			http.Error(w, fmt.Sprintf("Error executing query: %v", err), http.StatusInternalServerError)
+// 			return
+// 		}
+// 		defer rows.Close()
 
-		var result []map[string]interface{}
-		columns, _ := rows.Columns()
-		for rows.Next() {
-			values := make([]interface{}, len(columns))
-			pointers := make([]interface{}, len(columns))
-			for i := range values {
-				pointers[i] = &values[i]
-			}
-			err := rows.Scan(pointers...)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("Error scanning row: %v", err), http.StatusInternalServerError)
-				return
-			}
-			row := make(map[string]interface{})
-			for i, column := range columns {
-				row[column] = values[i]
-			}
-			result = append(result, row)
-		}
+// 		var result []map[string]interface{}
+// 		columns, _ := rows.Columns()
+// 		for rows.Next() {
+// 			values := make([]interface{}, len(columns))
+// 			pointers := make([]interface{}, len(columns))
+// 			for i := range values {
+// 				pointers[i] = &values[i]
+// 			}
+// 			err := rows.Scan(pointers...)
+// 			if err != nil {
+// 				http.Error(w, fmt.Sprintf("Error scanning row: %v", err), http.StatusInternalServerError)
+// 				return
+// 			}
+// 			row := make(map[string]interface{})
+// 			for i, column := range columns {
+// 				row[column] = values[i]
+// 			}
+// 			result = append(result, row)
+// 		}
 
-		json.NewEncoder(w).Encode(result)
-		return
-	}
+// 		json.NewEncoder(w).Encode(result)
+// 		return
+// 	}
 
-	// Handle INSERT, UPDATE, DELETE queries
-	result, err := db.Exec(query, args...)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Error executing query: %v", err), http.StatusInternalServerError)
-		return
-	}
+// 	// Handle INSERT, UPDATE, DELETE queries
+// 	result, err := db.Exec(query, args...)
+// 	if err != nil {
+// 		http.Error(w, fmt.Sprintf("Error executing query: %v", err), http.StatusInternalServerError)
+// 		return
+// 	}
 
-	rowCount, err := result.RowsAffected()
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Error fetching rows affected: %v", err), http.StatusInternalServerError)
-		return
-	}
+// 	rowCount, err := result.RowsAffected()
+// 	if err != nil {
+// 		http.Error(w, fmt.Sprintf("Error fetching rows affected: %v", err), http.StatusInternalServerError)
+// 		return
+// 	}
 
-	// Return a success response with rows affected
-	w.Header().Set("Content-Type", "application/json")
-	response := map[string]interface{}{
-		"message":       "Query executed successfully",
-		"rows_affected": rowCount,
-	}
-	json.NewEncoder(w).Encode(response)
-}
+// 	// Return a success response with rows affected
+// 	w.Header().Set("Content-Type", "application/json")
+// 	response := map[string]interface{}{
+// 		"message":       "Query executed successfully",
+// 		"rows_affected": rowCount,
+// 	}
+// 	json.NewEncoder(w).Encode(response)
+// }
 
 func validateQueryRequest(req QueryRequest) error {
 	if req.Table == "" {
@@ -412,4 +412,167 @@ func buildWhereClause(where map[string]string, startIndex ...int) (string, []int
 	}
 
 	return strings.Join(clauses, " AND "), args
+}
+
+func handleUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var queryRequest QueryRequest
+	if err := json.NewDecoder(r.Body).Decode(&queryRequest); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	queryRequest.Type = QueryTypeSelect
+	if err := validateQueryRequest(queryRequest); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	query, args := buildSelectQuery(queryRequest)
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error executing query: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var result []map[string]interface{}
+	columns, _ := rows.Columns()
+
+	if rows.Next() {
+		values := make([]interface{}, len(columns))
+		pointers := make([]interface{}, len(columns))
+		for i := range values {
+			pointers[i] = &values[i]
+		}
+
+		if err := rows.Scan(pointers...); err != nil {
+			http.Error(w, fmt.Sprintf("Error scanning row: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		row := make(map[string]interface{})
+		for i, column := range columns {
+			row[column] = values[i]
+		}
+		result = append(result, row)
+	} else {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+func handleInsertUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var queryRequest QueryRequest
+	if err := json.NewDecoder(r.Body).Decode(&queryRequest); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if queryRequest.Type != QueryTypeInsert {
+		http.Error(w, "Invalid query type", http.StatusBadRequest)
+		return
+	}
+
+	query, args := buildInsertQuery(queryRequest)
+	_, err := db.Exec(query, args...)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error executing query: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "User inserted successfully",
+	})
+}
+
+func handleViewAllUser(w http.ResponseWriter, r *http.Request) {
+	query := `SELECT email, R1, R2, R3, R4 FROM users`
+	rows, err := db.Query(query)
+	if err != nil {
+		http.Error(w, "Failed to fetch users", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var users []struct {
+		Email string `json:"email"`
+		R1    bool   `json:"R1"`
+		R2    bool   `json:"R2"`
+		R3    bool   `json:"R3"`
+		R4    bool   `json:"R4"`
+	}
+
+	for rows.Next() {
+		var user struct {
+			Email string `json:"email"`
+			R1    bool   `json:"R1"`
+			R2    bool   `json:"R2"`
+			R3    bool   `json:"R3"`
+			R4    bool   `json:"R4"`
+		}
+		if err := rows.Scan(&user.Email, &user.R1, &user.R2, &user.R3, &user.R4); err != nil {
+			http.Error(w, "Error reading user data", http.StatusInternalServerError)
+			return
+		}
+		users = append(users, user)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(users)
+}
+
+func handleUpdatePermissions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var queryRequest QueryRequest
+	if err := json.NewDecoder(r.Body).Decode(&queryRequest); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	queryRequest.Type = QueryTypeUpdate
+	queryRequest.Table = "users"
+
+	// Validate the request using existing validation function
+	if err := validateQueryRequest(queryRequest); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Use the existing query builder
+	query, args := buildUpdateQuery(queryRequest)
+	result, err := db.Exec(query, args...)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error executing query: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Permissions updated successfully",
+	})
 }
