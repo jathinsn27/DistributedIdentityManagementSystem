@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -26,16 +27,22 @@ type Request struct {
 }
 
 type Middleware struct {
-	currentLeader int
-	mutex         sync.RWMutex
-	requestQueue  chan Request
-	isLeaderUp    bool
+	currentLeader  int
+	mutex          sync.RWMutex
+	requestQueue   chan Request
+	isLeaderUp     bool
+	regionHandlers map[string]string
 }
 
 func NewMiddleware() *Middleware {
 	m := &Middleware{
 		requestQueue: make(chan Request, queueCapacity),
 		isLeaderUp:   false,
+		regionHandlers: map[string]string{
+			"asia": "node-1", // Asia requests go to node-1
+			"usa":  "node-2", // USA requests go to node-2
+			// Add more regions as needed
+		},
 	}
 	go m.pollForLeader()
 	go m.processQueue()
@@ -126,6 +133,22 @@ func (m *Middleware) forwardRequest(proxy *httputil.ReverseProxy, w http.Respons
 }
 
 func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Extract region from path
+	pathParts := strings.SplitN(r.URL.Path[1:], "/", 2)
+	if len(pathParts) < 2 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	region := pathParts[0]
+	r.URL.Path = "/" + pathParts[1] // Remove region prefix
+
+	// Check if region is valid
+	if _, exists := m.regionHandlers[region]; !exists {
+		http.Error(w, "Invalid region", http.StatusBadRequest)
+		return
+	}
+
 	done := make(chan error, 1)
 	req := Request{
 		w:    w,
@@ -133,7 +156,6 @@ func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		done: done,
 	}
 
-	// Try to queue the request
 	select {
 	case m.requestQueue <- req:
 		if err := <-done; err != nil {
